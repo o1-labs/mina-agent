@@ -528,7 +528,8 @@ def facts() -> list:
     out.append("Manifest tests: " + "; ".join(
         f"{t['name']} [{t['cost']}, modes {','.join(t['modes']) or 'none'}]" for t in m["tests"])
         + f". Any library with (inline_tests) also has {m['inline_tests']['name_prefix']}<library>.")
-    if shutil.which("ocamllsp"):
+    from . import lsp
+    if lsp.plugin_dir(ENV.repo):
         out.append("ocamllsp is installed: Claude's built-in LSP tool (goToDefinition, findReferences, "
                    "hover, documentSymbol) works on .ml/.mli files and is the first choice for "
                    "navigation; type_at/definition are the merlin fallback.")

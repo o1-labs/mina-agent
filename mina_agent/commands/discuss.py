@@ -87,7 +87,7 @@ def discuss(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     if dry_run:
         print("[dry-run] first message:\n" + first_message)
         print("\n[dry-run] command:")
-        for a in agent.interactive_argv(first_message)[2:]:
+        for a in agent.interactive_argv(first_message, e.repo)[2:]:
             print("   ", a[:160].replace("\n", " ") + ("..." if len(a) > 160 else ""))
         return
     before = _count_notes(notes)

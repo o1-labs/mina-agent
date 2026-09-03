@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import sys
 
-from . import paths
+from . import lsp, paths
 from .trajectory import Trajectory, to_record
 
 # --------------------------------------------------------------------------
@@ -130,7 +130,8 @@ def build_options(phase, env, *, max_turns=None, max_budget_usd=None, model=None
         cwd=env.repo,
         env=env.activate(),
         setting_sources=["project"],
-        plugins=[{"type": "local", "path": str(paths.PLUGIN)}],
+        plugins=([{"type": "local", "path": str(lsp.plugin_dir(env.repo))}]
+                 if lsp.plugin_dir(env.repo) else []),
         include_hook_events=True,
         hooks={"PostToolUse": [HookMatcher(matcher="Edit|Write", hooks=[_post_edit_cb], timeout=600)],
                "PreToolUse": [HookMatcher(matcher="Bash", hooks=[_pre_bash_cb], timeout=10)]},
@@ -181,17 +182,18 @@ def run_headless(prompt, options, log_path, on_call=lambda traj, c: None):
 # interactive
 # --------------------------------------------------------------------------
 
-def interactive_argv(first_message, extra_disallowed=()):
+def interactive_argv(first_message, repo, extra_disallowed=()):
     """`claude` TUI with the harness server, facts, and walls. The prompt is
     the first user message. --disallowedTools is variadic, so it goes last."""
     argv = ["claude", first_message,
             "--append-system-prompt", system_addition(),
-            "--mcp-config", json.dumps(mcp_config()), "--strict-mcp-config",
-            "--plugin-dir", str(paths.PLUGIN),
-            "--disallowedTools"] + list(extra_disallowed) + deny_rules()
+            "--mcp-config", json.dumps(mcp_config()), "--strict-mcp-config"]
+    if lsp.plugin_dir(repo):
+        argv += ["--plugin-dir", str(lsp.plugin_dir(repo))]
+    argv += ["--disallowedTools"] + list(extra_disallowed) + deny_rules()
     return argv
 
 
 def run_interactive(first_message, env, extra_disallowed=()):
-    argv = interactive_argv(first_message, extra_disallowed)
+    argv = interactive_argv(first_message, env.repo, extra_disallowed)
     return subprocess.run(argv, cwd=env.repo, env=env.activate()).returncode

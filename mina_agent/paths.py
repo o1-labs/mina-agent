@@ -15,7 +15,7 @@ DATA = PKG / "data"
 MANIFEST = DATA / "manifest.toml"
 SETTINGS_TEMPLATE = DATA / "settings.template.json"
 PHASES = DATA / "phases"
-PLUGIN = DATA / "plugin"          # .lsp.json for ocamllsp; loaded by headless, discuss, and the skills-dir symlink
+PLUGIN = DATA / "plugin"          # template: .lsp.json for ocamllsp; init writes the resolved copy to state/plugin
 SKILLS_DIR_LINK = Path.home() / ".claude" / "skills" / "mina-agent"
 VENDOR_DESCRIBE_DUNE = DATA / "vendor" / "describe-dune"
 MCP_SERVER_NAME = "mina-harness"
@@ -52,6 +52,10 @@ def logs_dir(repo):
 
 def notes_file(repo):
     return state_dir(repo) / "NOTES.md"
+
+
+def generated_plugin(repo):
+    return state_dir(repo) / "plugin"
 
 
 def describe_dune_bin(repo):

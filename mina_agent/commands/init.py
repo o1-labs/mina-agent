@@ -39,20 +39,6 @@ def merge_settings(repo):
     return target, len(perms["deny"]), sorted(hooks)
 
 
-def link_plugin():
-    """Symlink the LSP plugin into ~/.claude/skills so the user's own claude
-    sessions load ocamllsp automatically (skills-directory plugins auto-load
-    as <name>@skills-dir). Headless and discuss pass the plugin explicitly."""
-    link = paths.SKILLS_DIR_LINK
-    link.parent.mkdir(parents=True, exist_ok=True)
-    if link.is_symlink() or link.exists():
-        if link.is_symlink() and link.resolve() == paths.PLUGIN.resolve():
-            return link, "already linked"
-        return link, "exists and is not our symlink; left alone"
-    link.symlink_to(paths.PLUGIN)
-    return link, "linked"
-
-
 def register_mcp():
     """`claude mcp add --scope local` so the entry lives in ~/.claude.json keyed
     to this checkout, not in the repo (settings files cannot hold mcpServers)."""
@@ -84,8 +70,14 @@ def init():
     print(f"graph: {graph.summary(d)}")
     target, ndeny, events = merge_settings(e.repo)
     print(f"settings: {target} ({ndeny} deny rules; hooks for {', '.join(events)})")
-    link, how = link_plugin()
-    print(f"lsp plugin: {link} ({how})")
+    from .. import lsp
+    path, source = lsp.resolve(e)
+    if path:
+        out = lsp.write_plugin(e.repo, path)
+        link, how = lsp.link(e.repo)
+        print(f"lsp: {path} ({source}) -> plugin {out}; {link} {how}")
+    else:
+        print(f"lsp: {source}; Claude's LSP tool unavailable, merlin tools still work")
     try:
         name = register_mcp()
         print(f"mcp: registered {name} at local scope -> {agent.mina_agent_bin()} serve")

@@ -1,5 +1,6 @@
 """Verify the full harness setup and report."""
 import json
+import os
 import shutil
 import subprocess
 
@@ -32,12 +33,22 @@ def doctor(skip_mcp: bool = typer.Option(False, "--skip-mcp",
         for name in ("ocamlmerlin", "claude"):
             p = shutil.which(name, path=aenv.get("PATH"))
             row(name, bool(p), p or "not on PATH")
-        p = shutil.which("ocamllsp", path=aenv.get("PATH"))
-        row("ocamllsp", True if p else None,
-            p or "not installed; Claude's LSP tool unavailable, merlin tools still work")
-        link = paths.SKILLS_DIR_LINK
-        linked = link.is_symlink() and link.resolve() == paths.PLUGIN.resolve()
-        row("lsp plugin", linked, f"{link} -> {paths.PLUGIN}" if linked else f"{link} not linked; run mina-agent init")
+        from .. import lsp
+        p, source = lsp.resolve(e)
+        row("ocamllsp", True if p else None, f"{p} ({source})" if p else source)
+        gen = lsp.plugin_dir(e.repo)
+        if p:
+            row("lsp plugin", bool(gen) and lsp.linked(e.repo),
+                f"{gen} linked from {paths.SKILLS_DIR_LINK}" if gen and lsp.linked(e.repo)
+                else "not generated or not linked; run mina-agent init")
+        drift = subprocess.run([os.path.join(e.repo, "_opam", "bin", "check_opam_switch"), "opam.export"],
+                               cwd=e.repo, capture_output=True, text=True)
+        if drift.returncode == 0 and "not a superset" not in drift.stdout + drift.stderr:
+            row("opam.export", True, "project switch matches the export")
+        else:
+            miss = [l.strip() for l in (drift.stdout + drift.stderr).splitlines() if "Could not find" in l]
+            row("opam.export", None, "; ".join(miss) or "check_opam_switch unavailable"
+                + " (make build's check_opam_switch will fail; set DISABLE_CHECK_OPAM_SWITCH=true)")
     binp = agent.mina_agent_bin()
     row("mina-agent", bool(shutil.which("mina-agent")), binp)
     tool = paths.describe_dune_bin(e.repo)

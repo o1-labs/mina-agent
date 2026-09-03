@@ -167,8 +167,19 @@ def check_dhall(repo, env, files, staged):
     if not ok:
         return Result("dhall", "Lint/Dhall", "skip", why)
     lint_env = {**os.environ, "PATH": f"{dhall.binary(repo).parent}:{os.environ.get('PATH', '')}"}
-    r = subprocess.run(["make", "-C", "buildkite", "check_syntax", "check_lint", "check_format"],
-                       cwd=repo, env=lint_env, capture_output=True, text=True)
+    base = "buildkite/src/Command/Base.dhall"
+    dirty_before = subprocess.run(["git", "diff", "--quiet", "--", base], cwd=repo).returncode != 0
+    try:
+        r = subprocess.run(["make", "-C", "buildkite", "check_syntax", "check_lint", "check_format"],
+                           cwd=repo, env=lint_env, capture_output=True, text=True)
+    finally:
+        # check_* first run convert_backticks_to_ifs, a sed -i on Base.dhall that
+        # CI never undoes (disposable checkout). Undo it here unless the file
+        # was already modified by the user.
+        if not dirty_before:
+            subprocess.run(["make", "-C", "buildkite", "convert_ifs_to_backticks"],
+                           cwd=repo, env=lint_env, capture_output=True, text=True)
+            subprocess.run(["git", "checkout", "--", base], cwd=repo, capture_output=True)
     if r.returncode == 0:
         return Result("dhall", "Lint/Dhall", "ok", "syntax, lint, format clean")
     return Result("dhall", "Lint/Dhall", "fail", (r.stdout + r.stderr).strip()[-800:], [], "cd buildkite && make format")

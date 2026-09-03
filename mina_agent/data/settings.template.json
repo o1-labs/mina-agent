@@ -1,5 +1,5 @@
 {
-  "_comment": "Merged into .claude/settings.local.json by harness/install_settings.py. Docs relied on: code.claude.com/docs/en/hooks (Matcher field semantics, Hook stdin JSON input, Exit code semantics, JSON stdout output format) and code.claude.com/docs/en/permissions (Read and Edit: / anchors at the session cwd for local settings, single-segment deny patterns match at any depth, deny is evaluated before allow and is not bypassed by hooks).",
+  "_comment": "Installed into .claude/settings.local.json by `mina-agent init`, which points the hook commands at the mina-agent binary. Docs relied on: code.claude.com/docs/en/hooks (Matcher field semantics, Hook stdin JSON input, Exit code semantics, JSON stdout output format) and code.claude.com/docs/en/permissions (Read and Edit: / anchors at the session cwd for local settings, single-segment deny patterns match at any depth, deny is evaluated before allow and is not bypassed by hooks).",
   "permissions": {
     "deny": [
       "Edit(/flake.nix)",
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/harness/hooks/post_edit_check.py",
+            "command": "mina-agent hook post-edit",
             "timeout": 600,
             "statusMessage": "harness: type-checking edited file"
           }
@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/harness/hooks/pre_bash_guard.py",
+            "command": "mina-agent hook pre-bash",
             "timeout": 10
           }
         ]
@@ -60,7 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/harness/hooks/session_start.py",
+            "command": "mina-agent hook session-start",
             "timeout": 120,
             "statusMessage": "harness: deriving library graph"
           }

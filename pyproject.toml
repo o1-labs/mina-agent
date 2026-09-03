@@ -1,0 +1,21 @@
+[project]
+name = "mina-agent"
+version = "0.1.0"
+description = "Structural agent harness for the Mina monorepo: environment adapter, dune graph, MCP tools, walls, and headless phases."
+requires-python = ">=3.11"
+dependencies = [
+  "typer>=0.12",
+  "rich>=13",
+  "mcp==2.1.1",
+  "claude-agent-sdk==0.2.152",
+]
+
+[project.scripts]
+mina-agent = "mina_agent.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mina_agent"]

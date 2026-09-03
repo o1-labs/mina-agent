@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Tool implementations for the mina-harness MCP server and hooks.
 
-Stdlib only, so hook scripts can import this with plain python3. server.py
-wraps each public function here as an MCP tool. See server.py for the rules
+server.py wraps each public function listed in TOOLS as an MCP tool; the
+hook commands and discuss call them directly. See server.py for the rules
 (all shell-outs via env.py, one dune lock, graph re-derived on change).
 """
 
@@ -14,12 +14,11 @@ import threading
 import time
 import tomllib
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-import env as envmod      # noqa: E402
-import derive as derivemod  # noqa: E402
+from . import env as envmod
+from . import graph as derivemod
+from . import paths
 
-MANIFEST = os.path.join(HERE, "manifest.toml")
+MANIFEST = str(paths.MANIFEST)
 RAW_TAIL_BYTES = 4096
 DUNE_LOCK = threading.Lock()
 
@@ -56,10 +55,8 @@ class Graph:
         if not force and s == self.stamp:
             return False
         try:
-            self.data = derivemod.derive(self.env)
+            self.data = derivemod.derive_and_write(self.env)
             self.error = None
-            with open(derivemod.OUT, "w") as fh:
-                json.dump(self.data, fh, indent=1)
         except BaseException as ex:  # SystemExit from derive.py included
             self.error = f"derive failed: {ex}"
         self.stamp = s
@@ -582,7 +579,3 @@ def selftest():
     assert resolve_test("inline:currency")["command"] == ["dune", "build", "@src/lib/currency/runtest"]
     print(f"selftest ok: mode={ENV.mode} libraries={len(g['libraries'])}")
 
-
-if __name__ == "__main__":
-    if "--selftest" in sys.argv:
-        selftest()

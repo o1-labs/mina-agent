@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""Derive the library graph into harness/derived.json.
+"""Derive the library graph into harness/state/derived.json.
 
 Does exactly what nix/ocaml.nix does to build its `dune-description`:
 copy only dune / dune-project / *.inc / *.opam files into a temp tree, run
 o1-labs' describe-dune there, and read its JSON. Then reshape that JSON into
 lookup tables for the MCP tools (deps_of, dependents_of, tests_for).
 
-Usage:
-    python3 harness/derive.py            # write derived.json, print summary
-    python3 harness/derive.py --check    # exit 1 if derived.json is stale
-    python3 harness/derive.py --build    # (re)compile the tool only
+CLI: mina-agent derive [--check|--build] (hidden); setup and init call it.
 
-The tool is compiled on first use from harness/vendor/describe-dune into
-harness/bin/describe-dune via env.py, with the one-line build from its
+The tool is compiled on first use from mina_agent/data/vendor/describe-dune
+into harness/state/bin/describe-dune with the one-line build from its
 upstream Makefile. Never hand-edit derived.json.
 """
 import json
@@ -22,13 +19,9 @@ import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import env as envmod  # noqa: E402
+from . import paths
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-VENDOR = os.path.join(HERE, "vendor", "describe-dune")
-TOOL = os.path.join(HERE, "bin", "describe-dune")
-OUT = os.path.join(HERE, "derived.json")
+VENDOR = str(paths.VENDOR_DESCRIBE_DUNE)
 
 # Same file set as nix/ocaml.nix: sourceFilesBySuffices ../src [...]
 KEEP_SUFFIXES = ("dune", "dune-project", ".inc", ".opam")
@@ -38,8 +31,12 @@ SKIP_DIRS = {"_build", "node_modules", "_opam", "opam_switches", ".git"}
 PPX_PREFIXES = ("ppx_", "bisect_ppx")
 
 
+def tool_path(env):
+    return str(paths.describe_dune_bin(env.repo))
+
+
 def build_tool(env):
-    os.makedirs(os.path.dirname(TOOL), exist_ok=True)
+    TOOL = tool_path(env)
     src = os.path.join(VENDOR, "describe_dune.ml")
     argv = ["ocamlfind", "ocamlopt"]
     for p in ("cmdliner", "parsexp", "yojson", "stdio", "base"):
@@ -76,6 +73,7 @@ def filtered_tree(repo, dst):
 
 
 def run_describe(env):
+    TOOL = tool_path(env)
     if not os.path.exists(TOOL):
         build_tool(env)
     with tempfile.TemporaryDirectory(prefix="harness-describe-") as tmp:
@@ -198,38 +196,24 @@ def summary(d):
             f"input_files={d['input_files']} notes={len(d['notes'])}")
 
 
-def main(argv):
-    e = envmod.detect()
-    if e.mode == "none":
-        sys.stderr.write("derive.py: " + "; ".join(e.reasons) + "\n")
-        return 3
-    if "--build" in argv:
-        build_tool(e)
-        print(TOOL)
-        return 0
-    fresh = derive(e)
-    if "--check" in argv:
-        if not os.path.exists(OUT):
-            print("derived.json missing")
-            return 1
-        with open(OUT) as fh:
-            old = json.load(fh)
-        volatile = ("git_head",)
-        a = {k: v for k, v in old.items() if k not in volatile}
-        b = {k: v for k, v in fresh.items() if k not in volatile}
-        if a != b:
-            print("derived.json is stale; rerun harness/derive.py")
-            return 1
-        print("derived.json is current")
-        return 0
-    with open(OUT, "w") as fh:
-        json.dump(fresh, fh, indent=1, sort_keys=False)
+def derive_and_write(env):
+    """Derive and write harness/state/derived.json; returns the data."""
+    d = derive(env)
+    out = paths.derived_json(env.repo)
+    with open(out, "w") as fh:
+        json.dump(d, fh, indent=1)
         fh.write("\n")
-    print(f"wrote {os.path.relpath(OUT, e.repo)}: {summary(fresh)}")
-    for n in fresh["notes"]:
-        print("  note:", n)
-    return 0
+    return d
 
 
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+def check(env):
+    """True when the on-disk derived.json matches a fresh derivation."""
+    out = paths.derived_json(env.repo)
+    if not out.exists():
+        return False
+    with open(out) as fh:
+        old = json.load(fh)
+    fresh = derive(env)
+    volatile = ("git_head",)
+    return ({k: v for k, v in old.items() if k not in volatile}
+            == {k: v for k, v in fresh.items() if k not in volatile})

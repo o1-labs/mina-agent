@@ -3,11 +3,11 @@
 
 This is the only file in the harness that knows how the OCaml toolchain is
 reached. Everything else either imports `detect()` or shells out to
-`python3 harness/env.py run -- <cmd>`.
+`mina-agent exec -- <cmd>`.
 
-CLI:
-    python3 harness/env.py status            # JSON description of the env
-    python3 harness/env.py run -- <cmd...>   # run cmd inside the activated env
+CLI (via mina-agent):
+    mina-agent status --json                 # JSON description of the env
+    mina-agent exec -- <cmd...>              # run cmd inside the activated env
 
 Env vars:
     HARNESS_MODE=opam|nix   override detection
@@ -46,15 +46,8 @@ RLIMIT_NOFILE = 10240
 
 
 def _repo_root():
-    """Walk up from this file to the directory containing dune-project."""
-    d = os.path.dirname(os.path.abspath(__file__))
-    while True:
-        if os.path.exists(os.path.join(d, "dune-project")):
-            return d
-        parent = os.path.dirname(d)
-        if parent == d:
-            raise RuntimeError("could not find dune-project above harness/")
-        d = parent
+    from . import paths
+    return paths.repo_root()
 
 
 def _real(p):
@@ -325,56 +318,3 @@ def _version(argv, env):
                               timeout=30).stdout.strip() or None
     except Exception:
         return None
-
-
-# -- CLI ---------------------------------------------------------------------
-
-USAGE = "usage: env.py status | env.py run [--cwd DIR] -- <cmd...>"
-
-
-def _usage_error(msg):
-    sys.stderr.write(f"env.py: {msg}\n{USAGE}\n")
-    return 2
-
-
-def main(argv):
-    if not argv:
-        return _usage_error("missing subcommand")
-    sub, rest = argv[0], argv[1:]
-    if sub == "status":
-        print(detect().to_json())
-        return 0
-    if sub != "run":
-        return _usage_error(f"unknown subcommand {sub!r}")
-
-    cwd = None
-    if rest[:1] == ["--cwd"]:
-        if len(rest) < 2:
-            return _usage_error("--cwd needs a value")
-        cwd, rest = rest[1], rest[2:]
-    if rest[:1] == ["--"]:
-        rest = rest[1:]
-    if not rest:
-        return _usage_error("run needs a command after --")
-
-    e = detect()
-    if e.mode == "none":
-        _log("env.py: no usable toolchain (" + "; ".join(e.reasons) + "). "
-             "Activate the opam switch (`direnv allow`) or enter `nix develop`.")
-        return 3
-    if os.environ.get("HARNESS_DRY_RUN"):
-        env = e.activate()
-        print(json.dumps({"argv": e.argv(rest), "cwd": cwd or e.repo,
-                          "env_diff": {k: v[1] for k, v in
-                                       _env_diff(os.environ, env).items()}},
-                         indent=2))
-        return 0
-    try:
-        return e.run(rest, cwd=cwd).returncode
-    except RuntimeError as ex:
-        _log(f"env.py: {ex}")
-        return 3
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

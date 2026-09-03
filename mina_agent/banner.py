@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """Welcome banner for the Mina agent harness.
 
-Usage:
-    python3 harness/banner.py                # banner only
-    python3 harness/banner.py --status JSON  # banner + one status line
-    HARNESS_ASCII=1 python3 harness/banner.py  # 7-bit ASCII fallback
-
-Stdlib only. Printing is the only side effect.
+render(status=None) returns the art, plus one status line when given the
+env status dict. HARNESS_ASCII=1 forces the 7-bit fallback.
 """
 import json
 import os
@@ -52,15 +48,3 @@ def render(status=None):
         for w in status.get("warnings", []):
             lines.append(f"   ! {w}")
     return "\n".join(lines) + "\n"
-
-
-def main(argv):
-    status = None
-    if len(argv) >= 2 and argv[0] == "--status":
-        status = json.loads(argv[1])
-    sys.stdout.write(render(status))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

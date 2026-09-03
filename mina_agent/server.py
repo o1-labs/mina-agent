@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
 """mina-harness MCP server (stdio). Thin wrapper over tools.py.
 
-Run:   harness/.venv/bin/python harness/server.py
-Test:  harness/.venv/bin/python harness/server.py --selftest
+Run:   mina-agent serve   (what `mina-agent init` registers with claude mcp add)
 """
-import os
-import sys
+from mcp.server.mcpserver import MCPServer
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import tools  # noqa: E402
-
-from mcp.server.mcpserver import MCPServer  # noqa: E402
+from . import tools
 
 server = MCPServer(
     "mina-harness",
@@ -22,10 +17,3 @@ server = MCPServer(
 
 for _name in tools.TOOLS:
     server.tool()(getattr(tools, _name))
-
-if __name__ == "__main__":
-    if "--selftest" in sys.argv:
-        tools.selftest()
-        print("tools registered:", [t.name for t in server._tool_manager.list_tools()])
-    else:
-        server.run(transport="stdio")

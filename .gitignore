@@ -1,9 +1,7 @@
-# Generated or built artifacts. Everything here is reproducible.
-# compiled describe-dune (harness/derive.py --build)
-bin/
-# library graph (harness/derive.py), ~1 s to regenerate
-derived.json
-# headless run transcripts (harness/run.py)
-logs/
+# Project state written by mina-agent (derived graph, compiled describe-dune,
+# run logs, discussion notes). Reproducible or personal; never committed.
+state/
+# Python
 __pycache__/
+*.egg-info/
 .venv/

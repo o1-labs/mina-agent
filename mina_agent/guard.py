@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""PreToolUse hook for Bash: block environment mutation and raw toolchain calls.
+"""Bash command guard: block environment mutation and raw toolchain calls.
 
-Reads tool_input.command from stdin, splits compound commands on the
+offending(command) splits compound commands on the
 separators the permissions docs list (&&, ||, ;, |, |&, &, newline), strips
 the documented wrappers (timeout, time, nice, nohup, stdbuf, env assignments,
-command, builtin), and checks each subcommand's first word. Exit 2 with the
-reason on stderr blocks the call (docs: "Exit code semantics").
+command, builtin), and checks each subcommand's first word. Used by `mina-agent hook pre-bash`
+(exit 2 blocks) and by the in-process PreToolUse callback in agent.py.
 """
 import json
 import os
@@ -87,21 +87,3 @@ def offending(command):
         if w and w in BLOCKED:
             return " ".join(toks), w, BLOCKED[w]
     return None
-
-
-def main():
-    try:
-        payload = json.load(sys.stdin)
-    except ValueError:
-        return 0
-    cmd = (payload.get("tool_input") or {}).get("command") or ""
-    hit = offending(cmd)
-    if not hit:
-        return 0
-    sub, word, why = hit
-    sys.stderr.write(f"blocked `{sub}`: `{word}` is not allowed here; {why}\n")
-    return 2
-
-
-if __name__ == "__main__":
-    sys.exit(main())

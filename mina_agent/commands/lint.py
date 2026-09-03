@@ -21,7 +21,8 @@ def render(files, results, scope):
 
 
 def lint(all_: bool = typer.Option(False, "--all", help="Whole tree instead of the staged files."),
-         fix: bool = typer.Option(False, "--fix", help="Reformat failing OCaml files in place.")):
+         fix: bool = typer.Option(False, "--fix", help="Reformat failing OCaml files in place."),
+         history: int = typer.Option(0, "--history", help="Show the last N lint runs from the log instead of running.")):
     """Mirror CI's Lint jobs on the staged files, so CI never rejects a commit for formatting or lint.
 
     ocamlformat on the index blobs (what `make check-format` runs, scoped),
@@ -34,6 +35,14 @@ def lint(all_: bool = typer.Option(False, "--all", help="Whole tree instead of t
     if e.mode == "none":
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
+    if history:
+        for rec in L.history(e.repo, history):
+            fails = [r["name"] for r in rec["results"] if r["status"] == "fail"]
+            fixed = any(r["status"] == "note" and r["name"] == "ocamlformat" for r in rec["results"])
+            files = rec["files"] if isinstance(rec["files"], list) else f"{rec['files']} files"
+            verdict = "BLOCKED " + ",".join(fails) if rec["blocked"] else ("fixed" if fixed else "passed")
+            print(f"{rec['ts']}  {rec['caller']:10s} {rec['scope']:6s} head={rec['head']}  {verdict}  {files}")
+        return
     scope = "all" if all_ else "staged"
     files, results = L.run(e, scope=scope, fix=fix)
     render(files, results, scope)

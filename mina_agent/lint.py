@@ -240,7 +240,7 @@ CHECKS = [check_ocamlformat, check_require_ppxs, check_codeowners, check_rfcs, c
           check_changelog, check_merges]
 
 
-def run(env, *, scope="staged", fix=False):
+def run(env, *, scope="staged", fix=False, caller="cli"):
     repo = env.repo
     files = staged_files(repo) if scope == "staged" else all_files(repo)
     results = []
@@ -249,4 +249,35 @@ def run(env, *, scope="staged", fix=False):
             results.append(chk(repo, env, files, scope == "staged", fix=fix))
         else:
             results.append(chk(repo, env, files, scope == "staged"))
+    record(repo, scope, caller, files, results)
     return files, results
+
+
+def log_path(repo):
+    from . import paths
+    return paths.logs_dir(repo) / "lint.jsonl"
+
+
+def record(repo, scope, caller, files, results):
+    """Append one JSON line per lint run to harness/state/logs/lint.jsonl, so
+    every commit gate decision (including the hook's) can be audited."""
+    import datetime as dt
+    import json
+    rec = {"ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+           "scope": scope, "caller": caller,
+           "head": _git(repo, "rev-parse", "--short", "HEAD").strip(),
+           "files": files if scope == "staged" else len(files),
+           "blocked": any(r.status == "fail" for r in results),
+           "results": [{"name": r.name, "status": r.status, "detail": r.detail[:200],
+                        "files": r.files[:20]} for r in results]}
+    with open(log_path(repo), "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec) + "\n")
+
+
+def history(repo, n=10):
+    import json
+    p = log_path(repo)
+    if not p.exists():
+        return []
+    lines = p.read_text().splitlines()[-n:]
+    return [json.loads(l) for l in lines if l.strip()]

@@ -44,7 +44,7 @@ def pre_commit():
     if e.mode == "none":
         sys.stderr.write("mina-agent pre-commit: no usable toolchain, skipping lint\n")
         return
-    files, results = L.run(e, scope="staged")
+    files, results = L.run(e, scope="staged", caller="pre-commit")
     bad = [r for r in results if r.status == "fail"]
     skipped = [r for r in results if r.status == "skip"]
     if bad or skipped:

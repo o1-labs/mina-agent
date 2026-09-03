@@ -458,9 +458,14 @@ This session cannot edit or run anything: Edit, Write, and Bash are removed.
 When the reader asks you to record something (a comment for the author, a
 note), print the text for them to paste.
 
-Begin with at most six lines: what this PR changes in one sentence, why in
-one sentence, where to start reading (one link), and a question offering
-the next step. Every identifier in those lines is a link too. Then wait.
+Your first reply, in this order:
+1. One line giving the reader the files: "Pack: {pack_link} · diff: {diff_link}{map_clause} · open the Markdown preview (Cmd+Shift+V) to see the map." Use those exact links.
+2. What this PR changes, in one sentence.
+3. Why, in one sentence.
+4. Where to start reading, one link.
+5. A question offering the next step.
+Every identifier in lines 2 to 5 is a link too. Keep it to six lines after
+the files line. Then wait.
 """
 
 CHECKOUT_LIVE = ("The PR is checked out in the working tree, so LSP, type_at, definition and "
@@ -476,8 +481,12 @@ def first_message(pack, checked_out):
     if len(diff_md) > limit:
         diff_md = diff_md[:limit] + f"\n\n[diff truncated at {limit} characters; full diff in {pack.out / 'diff.md'}]\n"
     note = CHECKOUT_LIVE if checked_out else CHECKOUT_NOT.format(head_dir=pack.out / "head")
-    return "\n".join([RULES.format(number=pack.number, checkout_note=note),
-                      "# Navigation pack", "", pack_md, "", "# Structural diff", "", diff_md])
+    pack_link = f"[pack.md]({vscode_link(pack.out / 'pack.md')})"
+    diff_link = f"[diff.md]({vscode_link(pack.out / 'diff.md')})"
+    map_clause = f" · map: [map.svg]({vscode_link(pack.out / 'map.svg')})" if (pack.out / "map.svg").exists() else ""
+    rules = RULES.format(number=pack.number, checkout_note=note,
+                         pack_link=pack_link, diff_link=diff_link, map_clause=map_clause)
+    return "\n".join([rules, "# Navigation pack", "", pack_md, "", "# Structural diff", "", diff_md])
 
 
 # --------------------------------------------------------------------------

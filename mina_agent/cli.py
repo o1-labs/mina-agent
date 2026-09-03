@@ -24,6 +24,7 @@ Typical workflow:
   5. mina-agent discuss           interactive session with the harness tools
   6. mina-agent trace <log>       trajectory evidence for any past run
   7. mina-agent lint              CI's lint jobs on the staged files (also the git pre-commit hook)
+  8. mina-agent dashboard --open  live browser view of runs, hooks, denials, and the lint gate
 
 Run mina-agent <command> --help for details."""
 
@@ -62,7 +63,7 @@ def _main(ctx: typer.Context,
 
 # ── register commands ─────────────────────────────────────────────────
 
-from .commands import setup, init, doctor, status, discuss, trace, lint  # noqa: E402
+from .commands import setup, init, doctor, status, discuss, trace, lint, dashboard  # noqa: E402
 from .commands import serve, hook, exec_, derive, list_            # noqa: E402
 from .commands import run as run_cmd                                # noqa: E402
 
@@ -73,6 +74,7 @@ app.command()(status.status)
 app.command()(discuss.discuss)
 app.command()(trace.trace)
 app.command()(lint.lint)
+app.command()(dashboard.dashboard)
 run_cmd.register(app)                       # one command per data/phases/*.md
 app.command("serve", hidden=True)(serve.serve)
 app.add_typer(hook.app, name="hook", hidden=True)

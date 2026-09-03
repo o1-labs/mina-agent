@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mina-agent</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1115; --panel:#161a22; --line:#252b37; --fg:#d6dae2; --dim:#8a92a3; --ok:#4fbf7f; --bad:#e5645f; --warn:#e0b04c; --info:#5aa9e6; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header { display:flex; align-items:baseline; gap:16px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:15px; letter-spacing:.06em; }
+  header .live { color:var(--dim) } header .live.on { color:var(--ok) }
+  main { display:grid; grid-template-columns: 340px 1fr; height: calc(100vh - 42px); }
+  aside { border-right:1px solid var(--line); overflow:auto; }
+  section { padding:12px 16px; overflow:auto; }
+  h2 { font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; margin:14px 0 6px; }
+  .run { padding:8px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .run:hover, .run.sel { background:var(--panel) }
+  .run .phase { font-weight:600 } .run .meta { color:var(--dim); font-size:12px }
+  .pill { display:inline-block; padding:0 6px; border-radius:3px; font-size:11px; border:1px solid var(--line); margin-left:6px; }
+  .ok { color:var(--ok) } .bad { color:var(--bad) } .warn { color:var(--warn) } .info { color:var(--info) } .dim { color:var(--dim) }
+  table { border-collapse:collapse; width:100%; margin-bottom:10px; }
+  th, td { text-align:left; vertical-align:top; padding:4px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:500; font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
+  td.in, td.res { max-width:520px; overflow-wrap:anywhere; color:#c2c8d4 }
+  pre { background:var(--panel); padding:10px 12px; border-radius:4px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .stats { color:var(--dim); margin:4px 0 10px }
+  .lint { padding:6px 12px; border-bottom:1px solid var(--line); font-size:12px }
+</style>
+</head>
+<body>
+<header>
+  <h1>mina-agent</h1>
+  <span id="live" class="live">connecting</span>
+  <span class="dim" id="logs"></span>
+</header>
+<main>
+  <aside>
+    <h2 style="padding:0 12px">runs</h2>
+    <div id="runs"></div>
+    <h2 style="padding:0 12px">lint gate</h2>
+    <div id="lint"></div>
+  </aside>
+  <section id="detail"><span class="dim">select a run</span></section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+let selected = null, runs = [];
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const short = (v, n=160) => { const s = typeof v === "string" ? v : JSON.stringify(v); return s.length > n ? s.slice(0, n-3) + "..." : s; };
+
+async function loadRuns() {
+  runs = await (await fetch("/api/runs")).json();
+  if (!selected && runs.length) selected = runs[0].id;
+  $("#runs").innerHTML = runs.map(r => `
+    <div class="run ${r.id === selected ? "sel" : ""}" data-id="${r.id}">
+      <div class="phase">${esc(r.phase)} <span class="pill ${r.status === "success" ? "ok" : r.status === "running" ? "warn" : "bad"}">${esc(r.status)}</span>
+        ${r.bash_present ? '<span class="pill bad">bash</span>' : '<span class="pill ok">no bash</span>'}</div>
+      <div class="meta">${esc(r.started)} · ${r.calls} calls · ${r.turns ?? "…"} turns · $${r.cost_usd} · ${r.duration_s}s</div>
+    </div>`).join("") || '<div class="run dim">no runs yet</div>';
+  document.querySelectorAll(".run[data-id]").forEach(el => el.onclick = () => { selected = el.dataset.id; loadRuns(); loadRun(); });
+}
+
+async function loadRun() {
+  if (!selected) return;
+  const r = await (await fetch("/api/run/" + encodeURIComponent(selected))).json();
+  if (r.error) { $("#detail").innerHTML = `<span class="bad">${esc(r.error)}</span>`; return; }
+  const inv = r.inventory ? `
+    <div>Bash present: <b class="${r.inventory.bash_present ? "bad" : "ok"}">${r.inventory.bash_present}</b>
+      · harness tools: ${r.inventory.harness.length} · built-in: ${esc(r.inventory.builtin.join(", "))}</div>`
+    : '<div class="dim">no init message yet</div>';
+  const calls = r.calls.map(c => `<tr><td>${c.n}</td><td>${esc(c.tool)}</td><td class="in">${esc(short(c.input))}</td>
+      <td class="res ${c.error ? "bad" : ""}">${esc(short(c.result))}</td></tr>`).join("");
+  const hooks = r.hooks.map(h => `<tr><td>${esc(h.name)}</td><td class="in">${esc(short(h.input, 100))}</td><td class="res">${esc(h.detail)}</td></tr>`).join("");
+  const den = r.denials.map(d => `<tr><td>${esc(d.tool_name)}</td><td class="in">${esc(short(d.tool_input))}</td></tr>`).join("");
+  $("#detail").innerHTML = `
+    <h2>${esc(r.id)} <span class="pill ${r.status === "success" ? "ok" : r.status === "running" ? "warn" : "bad"}">${esc(r.status)}</span></h2>
+    <div class="stats">${esc(r.stats)}</div>
+    <h2>tool inventory</h2>${inv}
+    <h2>tool calls (${r.calls.length})</h2>
+    <table><tr><th>#</th><th>tool</th><th>input</th><th>result</th></tr>${calls || '<tr><td colspan=4 class="dim">none yet</td></tr>'}</table>
+    <h2>hook firings (${r.hooks.length})</h2>
+    <table><tr><th>hook</th><th>input</th><th>outcome</th></tr>${hooks || '<tr><td colspan=3 class="dim">none</td></tr>'}</table>
+    <h2>permission denials (${r.denials.length})</h2>
+    <table><tr><th>tool</th><th>input</th></tr>${den || '<tr><td colspan=2 class="dim">none</td></tr>'}</table>
+    <h2>result</h2><pre>${esc(r.result_text || "(not finished)")}</pre>`;
+}
+
+async function loadLint() {
+  const h = await (await fetch("/api/lint")).json();
+  $("#lint").innerHTML = h.slice().reverse().slice(0, 25).map(x => {
+    const fails = x.results.filter(r => r.status === "fail").map(r => r.name);
+    const fixed = x.results.some(r => r.name === "ocamlformat" && r.status === "note");
+    const v = x.blocked ? `<span class="bad">BLOCKED ${esc(fails.join(","))}</span>` : fixed ? '<span class="info">fixed</span>' : '<span class="ok">passed</span>';
+    const files = Array.isArray(x.files) ? x.files.map(f => f.split("/").pop()).join(", ") : x.files + " files";
+    return `<div class="lint">${esc(x.ts.replace("T"," ").slice(5,16))} <span class="dim">${esc(x.caller)}</span> ${v}<br><span class="dim">${esc(short(files, 90))}</span></div>`;
+  }).join("") || '<div class="lint dim">no lint runs yet</div>';
+}
+
+async function refresh() { await Promise.all([loadRuns(), loadLint()]); await loadRun(); }
+refresh();
+const es = new EventSource("/events");
+es.onopen = () => { $("#live").textContent = "live"; $("#live").classList.add("on"); };
+es.onerror = () => { $("#live").textContent = "disconnected"; $("#live").classList.remove("on"); };
+es.onmessage = () => refresh();
+</script>
+</body>
+</html>

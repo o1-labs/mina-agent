@@ -506,6 +506,39 @@ TOOLS = ["env_status", "build", "check", "check_dependents", "test", "test_one",
          "tests_for", "deps_of", "dependents_of", "library_of", "type_at", "definition"]
 
 
+
+def facts() -> list:
+    """Plain factual statements about the environment and manifest, for the
+    SessionStart hook and run.py's --append-system-prompt. Statements, never
+    instructions (hooks docs: prompt-injection note)."""
+    env, m = ENV, MANIFEST_DATA
+    out = [f"mina-harness environment: mode={env.mode} activated={env.activated} "
+           f"dune={env.dune_version} ocaml={env.ocaml}."]
+    out += [f"warning: {w}" for w in env.warnings]
+    if GRAPH.error:
+        out.append(f"library graph unavailable: {GRAPH.error}")
+    else:
+        g = GRAPH.data
+        out.append(f"library graph derived from dune files: {len(g['libraries'])} libraries, "
+                   f"{len(g['tests'])} test units, {len(g['executables'])} executables.")
+    b = m["boundary"]
+    out.append("OCaml/Rust boundary (read-only, mutable=false): libraries "
+               + ", ".join(b["libraries"]) + f" in {b['stubs_dir']} wrap crates "
+               + ", ".join(b["crates"]) + ". Protected paths: " + ", ".join(b["rust_paths"]) + ".")
+    out.append("Core libraries: " + "; ".join(
+        f"{k} ({v['dir']}, cheap test {v['cheap_test']})" for k, v in m["core"].items()) + ".")
+    out.append("Manifest tests: " + "; ".join(
+        f"{t['name']} [{t['cost']}, modes {','.join(t['modes']) or 'none'}]" for t in m["tests"])
+        + f". Any library with (inline_tests) also has {m['inline_tests']['name_prefix']}<library>.")
+    out.append("MCP server mina-harness provides: " + ", ".join(TOOLS)
+               + ". type_at/definition describe code as last compiled; check decides whether "
+               "an edit compiles; after every Edit of a .ml/.mli file a hook runs check "
+               "automatically and returns its diagnostics. Raw dune/opam/nix/cargo/make "
+               "commands are blocked; build-config and Rust boundary files are deny-listed "
+               "for edits.")
+    return out
+
+
 # --------------------------------------------------------------------------
 # selftest
 # --------------------------------------------------------------------------

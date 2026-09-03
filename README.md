@@ -10,9 +10,13 @@ and interactive sessions both start from that same set of walls and facts,
 and only when invoked through `mina-agent`: nothing is written into the
 repo's Claude settings, so plain `claude` sessions are unaffected.
 
-    uv tool install --editable ./harness
+    uv tool install ./harness            # --editable while developing the harness itself
     mina-agent setup && mina-agent init && mina-agent doctor
     mina-agent --help
+
+The tool lives in uv's tool directory, not in the checkout, so it survives
+checking out branches that predate `harness/` (which `review --checkout`
+does). Reinstall after changing the harness source.
 
 Every command answers `--help`. Listings of tools, tests, and phases are
 derived, not documented: `mina-agent list tools|tests|phases`.

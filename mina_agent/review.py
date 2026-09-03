@@ -307,8 +307,18 @@ def render_pack(repo, pack, link_root):
 # --------------------------------------------------------------------------
 
 def _dirty(repo):
-    """Tracked modifications or staged changes (untracked files are fine)."""
-    return [l for l in _git(repo, "status", "--porcelain", "--untracked-files=no").splitlines() if l.strip()]
+    """Tracked modifications or staged changes. Untracked files are fine, and
+    so are submodule pointer differences: checking out a PR branch moves the
+    recorded submodule commits without updating the submodules."""
+    out = _git(repo, "status", "--porcelain", "--untracked-files=no", "--ignore-submodules=all")
+    return [l for l in out.splitlines() if l.strip()]
+
+
+def installed_from_repo(repo):
+    """True when the running package lives inside the checkout (an editable
+    install). Checking out a branch without harness/ would then delete the
+    tool from under itself."""
+    return str(paths.PKG).startswith(str(Path(repo).resolve()) + os.sep)
 
 
 def _state_file(repo):
@@ -328,6 +338,9 @@ def checkout(repo, number):
                            "run `mina-agent review --done` first")
     if _dirty(repo):
         raise RuntimeError("working tree has uncommitted changes; commit or stash them before --checkout")
+    if installed_from_repo(repo):
+        raise RuntimeError("mina-agent is installed editable from this checkout; a branch without harness/ "
+                           "would remove it. Reinstall non-editable: uv tool install ./harness --reinstall")
     previous = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
     _gh(repo, "pr", "checkout", str(number))
     _state_file(repo).parent.mkdir(parents=True, exist_ok=True)

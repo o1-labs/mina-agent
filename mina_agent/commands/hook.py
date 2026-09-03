@@ -35,6 +35,26 @@ def pre_bash():
         raise typer.Exit(2)
 
 
+@app.command("pre-commit")
+def pre_commit():
+    """git pre-commit: run CI's lint jobs on the staged files; non-zero blocks the commit."""
+    from .. import env as envmod, lint as L
+    from .lint import render
+    e = envmod.detect()
+    if e.mode == "none":
+        sys.stderr.write("mina-agent pre-commit: no usable toolchain, skipping lint\n")
+        return
+    files, results = L.run(e, scope="staged")
+    bad = [r for r in results if r.status == "fail"]
+    skipped = [r for r in results if r.status == "skip"]
+    if bad or skipped:
+        render(files, results, "staged")
+    if bad:
+        sys.stderr.write("mina-agent pre-commit: commit blocked; fix the failures above or bypass once "
+                         "with `git commit --no-verify`\n")
+        raise typer.Exit(1)
+
+
 @app.command("session-start")
 def session_start():
     """SessionStart: re-derive the graph and hand the session its facts."""

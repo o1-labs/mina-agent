@@ -39,6 +39,22 @@ def merge_settings(repo):
     return target, len(perms["deny"]), sorted(hooks)
 
 
+HOOK_MARKER = "# installed by mina-agent init"
+
+
+def install_git_hook(repo):
+    """Write .git/hooks/pre-commit (or core.hooksPath/pre-commit) calling
+    `mina-agent hook pre-commit`. Leaves a foreign hook alone."""
+    hook = paths.git_hook(repo)
+    body = f"#!/bin/sh\n{HOOK_MARKER}\nexec \"{agent.mina_agent_bin()}\" hook pre-commit\n"
+    if hook.exists() and HOOK_MARKER not in hook.read_text():
+        return hook, "exists and is not ours; left alone (chain it manually: mina-agent hook pre-commit)"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text(body)
+    hook.chmod(0o755)
+    return hook, "installed"
+
+
 def register_mcp():
     """`claude mcp add --scope local` so the entry lives in ~/.claude.json keyed
     to this checkout, not in the repo (settings files cannot hold mcpServers)."""
@@ -70,6 +86,8 @@ def init():
     print(f"graph: {graph.summary(d)}")
     target, ndeny, events = merge_settings(e.repo)
     print(f"settings: {target} ({ndeny} deny rules; hooks for {', '.join(events)})")
+    hook, how = install_git_hook(e.repo)
+    print(f"git pre-commit: {hook} ({how})")
     from .. import lsp
     path, source = lsp.resolve(e)
     if path:

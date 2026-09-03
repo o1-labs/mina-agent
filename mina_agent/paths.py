@@ -64,5 +64,15 @@ def describe_dune_bin(repo):
     return p / "describe-dune"
 
 
+def git_hook(repo, name="pre-commit"):
+    """Path of a git hook, honouring core.hooksPath."""
+    import subprocess
+    r = subprocess.run(["git", "config", "--get", "core.hooksPath"], cwd=repo, capture_output=True, text=True)
+    base = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else Path(repo) / ".git" / "hooks"
+    if not base.is_absolute():
+        base = Path(repo) / base
+    return base / name
+
+
 def settings_local(repo):
     return Path(repo) / ".claude" / "settings.local.json"

@@ -77,6 +77,12 @@ def doctor(skip_mcp: bool = typer.Option(False, "--skip-mcp",
         out = r.stdout + r.stderr
         row("mcp server", "Connected" in out, out.strip().splitlines()[2].strip() if r.returncode == 0
             and len(out.splitlines()) > 2 else "not registered; run mina-agent init")
+    hook = paths.git_hook(e.repo)
+    ours = hook.exists() and "mina-agent" in hook.read_text() and binp in hook.read_text()
+    row("git pre-commit", ours, str(hook) if ours else f"{hook} missing or foreign; run mina-agent init")
+    for tool_name, job in (("shellcheck", "Lint/Bash"), ("hadolint", "Lint/Docker"), ("dhall", "Lint/Dhall")):
+        found = shutil.which(tool_name)
+        row(tool_name, True if found else None, found or f"not installed; {job} will be skipped locally and run by CI")
     notes = paths.notes_file(e.repo)
     row("notes", None, str(notes) if notes.exists() else "none yet (created by discuss)")
 

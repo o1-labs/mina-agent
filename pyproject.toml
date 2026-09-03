@@ -8,6 +8,7 @@ dependencies = [
   "rich>=13",
   "mcp==2.1.1",
   "claude-agent-sdk==0.2.152",
+  "sexpdata>=1.0",
 ]
 
 [project.scripts]

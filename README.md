@@ -19,3 +19,9 @@ The one thing `--help` cannot tell you: the edit deny rules cover Claude's
 file tools and the shell commands Claude Code recognises, not a script the
 model writes that opens a file itself. Closing that needs the sandbox, which
 this harness does not configure.
+
+Known limitation: the harness serializes the dune calls it makes, but not
+a `dune build -w` you run yourself; on the pinned dune (3.3.1) two dune
+processes on one `_build` can corrupt each other's temporaries, and the
+native fix (`dune rpc build` into the watcher) is experimental there. Stop
+the watcher while the agent builds, until the dune pin moves.

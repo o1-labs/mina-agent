@@ -190,29 +190,68 @@ def test_candidates(pack):
     return sorted(out, key=lambda x: order.get(x["cost"], 9))
 
 
-def mermaid(pack, radius, max_dependents=8):
-    changed = set(radius)
-    lines = ["```mermaid", "graph LR"]
-    for lib in radius:
-        lines.append(f'  {lib}["{lib}"]:::changed')
+def _map_edges(pack, radius, max_dependents=8):
+    """(changed set, edges as (src, dst), extra label per lib). Edge direction
+    is dependency -> dependent, i.e. an arrow points from a library to the
+    thing that would be affected by changing it."""
     from . import tools
     g = tools.GRAPH.get()
-    for lib in radius:
+    changed = set(radius)
+    edges, extra = [], {}
+    for lib in radius:                       # changed -> changed
         for dep in g["libraries"][lib]["deps"]:
             if dep in changed:
-                lines.append(f"  {dep} --> {lib}")
-    for lib, d in radius.items():
+                edges.append((dep, lib))
+    for lib, d in radius.items():            # changed -> its dependents
         for dep in d["libraries"][:max_dependents]:
             if dep not in changed:
-                lines.append(f'  {dep}["{dep}"]')
-                lines.append(f"  {lib} --> {dep}")
-        extra = len(d["libraries"]) - max_dependents
-        if extra > 0:
-            lines.append(f'  {lib}_more["+{extra} more dependents"]')
-            lines.append(f"  {lib} --> {lib}_more")
-    lines.append("  classDef changed fill:#f6d365,stroke:#333,color:#000")
-    lines.append("```")
-    return "\n".join(lines)
+                edges.append((lib, dep))
+        if len(d["libraries"]) > max_dependents:
+            extra[lib] = len(d["libraries"]) - max_dependents
+    return changed, edges, extra
+
+
+def dot(pack, radius, max_dependents=8):
+    """Graphviz DOT for the change map. Rendered to SVG when `dot` is on PATH."""
+    changed, edges, extra = _map_edges(pack, radius, max_dependents)
+    L = ['digraph changemap {', '  rankdir=LR;', '  node [shape=box, style=rounded, fontname="monospace", fontsize=10];',
+         '  edge [color="#888888", arrowsize=0.7];']
+    for lib in radius:
+        L.append(f'  "{lib}" [style="rounded,filled", fillcolor="#f6d365"];')
+    for src, dst in edges:
+        L.append(f'  "{src}" -> "{dst}";')
+    for lib, n in extra.items():
+        L.append(f'  "+{n} more\\n(dependents of {lib})" [shape=note, fillcolor="#f0f0f0", style=filled];')
+        L.append(f'  "{lib}" -> "+{n} more\\n(dependents of {lib})";')
+    L.append("}")
+    return "\n".join(L)
+
+
+def text_map(pack, radius, max_dependents=8):
+    """Plain indented tree, the fallback that renders in any markdown view."""
+    L = []
+    for lib, d in radius.items():
+        L.append(f"- **{lib}** (changed)")
+        deps = d["libraries"]
+        for dep in deps[:max_dependents]:
+            L.append(f"    - {dep}")
+        if len(deps) > max_dependents:
+            L.append(f"    - +{len(deps) - max_dependents} more")
+        if not deps:
+            L.append("    - (no library dependents)")
+    return "\n".join(L)
+
+
+def render_map(pack, radius):
+    """Write map.svg with graphviz if available; return the markdown to embed:
+    an image link when rendered, else an indented tree."""
+    if shutil.which("dot"):
+        svg = pack.out / "map.svg"
+        r = subprocess.run(["dot", "-Tsvg", "-o", str(svg)], input=dot(pack, radius),
+                           capture_output=True, text=True)
+        if r.returncode == 0 and svg.exists():
+            return f"![change map]({svg.name})\n\n(dependency -> dependent; changed libraries filled)"
+    return text_map(pack, radius) + "\n\n(install graphviz for a rendered map: brew install graphviz)"
 
 
 # --------------------------------------------------------------------------
@@ -282,7 +321,7 @@ def render_pack(repo, pack, link_root):
             L.append("  - libraries: " + ", ".join(d["libraries"][:20]) + (" …" if len(d["libraries"]) > 20 else ""))
         if d["executables"]:
             L.append("  - executables: " + ", ".join(d["executables"][:10]))
-    L += ["", mermaid(pack, radius), ""]
+    L += ["", "### Change map", "", render_map(pack, radius), ""]
     L += ["## Reading order (dependencies before dependents)", ""]
     n = 0
     for lib in order:

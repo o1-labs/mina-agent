@@ -145,6 +145,8 @@ def review_tools(e):
         yield Check("gh", OK, f"{gh}, logged in, can read this repository's PRs")
     d = shutil.which("difft")
     yield Check("difftastic", OK if d else NOTE, d or "not installed; review diffs fall back to git diff (brew install difftastic)")
+    g = shutil.which("dot")
+    yield Check("graphviz", OK if g else NOTE, g or "not installed; the review change map falls back to a text tree (brew install graphviz)")
 
 
 def external_plugins(e):

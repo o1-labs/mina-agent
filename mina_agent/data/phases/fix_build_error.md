@@ -1,6 +1,6 @@
 ---
 name: fix_build_error
-allowed_tools: Read, Grep, Glob, Edit, mcp__mina-harness__*
+allowed_tools: Read, Grep, Glob, Edit, LSP, mcp__mina-harness__*
 disallowed_tools: Bash, Write, NotebookEdit, WebFetch, WebSearch, Agent, Task
 permission_mode: acceptEdits
 max_turns: 40
@@ -9,9 +9,10 @@ args: target
 ---
 Run the mina-harness `build` tool on `{{target}}`.
 
-If it fails, locate the cause using the structured errors it returns and the
-harness tools: `tests_for`, `deps_of`, `dependents_of`, `library_of`,
-`definition`, `type_at`, and file reads. Make the minimal fix with Edit. After
+If it fails, locate the cause using the structured errors it returns, the LSP
+tool (goToDefinition, hover, findReferences) when available, the harness tools
+`tests_for`, `deps_of`, `dependents_of`, `library_of`, `definition`, `type_at`,
+and file reads. Make the minimal fix with Edit. After
 each edit of a `.ml` or `.mli` file the harness type-checks it automatically
 and returns the diagnostics; read that result before doing anything else.
 Re-run `build` until it passes.

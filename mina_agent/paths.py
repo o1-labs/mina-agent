@@ -15,6 +15,8 @@ DATA = PKG / "data"
 MANIFEST = DATA / "manifest.toml"
 SETTINGS_TEMPLATE = DATA / "settings.template.json"
 PHASES = DATA / "phases"
+PLUGIN = DATA / "plugin"          # .lsp.json for ocamllsp; loaded by headless, discuss, and the skills-dir symlink
+SKILLS_DIR_LINK = Path.home() / ".claude" / "skills" / "mina-agent"
 VENDOR_DESCRIBE_DUNE = DATA / "vendor" / "describe-dune"
 MCP_SERVER_NAME = "mina-harness"
 

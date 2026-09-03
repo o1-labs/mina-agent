@@ -1,0 +1,5 @@
+{
+  "name": "mina-agent",
+  "description": "OCaml language server (ocamllsp) for Claude Code's LSP tool in the Mina monorepo. Requires ocaml-lsp-server in the repo's opam switch.",
+  "version": "0.1.0"
+}

@@ -9,6 +9,7 @@ hook commands and discuss call them directly. See server.py for the rules
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -527,6 +528,10 @@ def facts() -> list:
     out.append("Manifest tests: " + "; ".join(
         f"{t['name']} [{t['cost']}, modes {','.join(t['modes']) or 'none'}]" for t in m["tests"])
         + f". Any library with (inline_tests) also has {m['inline_tests']['name_prefix']}<library>.")
+    if shutil.which("ocamllsp"):
+        out.append("ocamllsp is installed: Claude's built-in LSP tool (goToDefinition, findReferences, "
+                   "hover, documentSymbol) works on .ml/.mli files and is the first choice for "
+                   "navigation; type_at/definition are the merlin fallback.")
     out.append("MCP server mina-harness provides: " + ", ".join(TOOLS)
                + ". type_at/definition describe code as last compiled; check decides whether "
                "an edit compiles; after every Edit of a .ml/.mli file a hook runs check "

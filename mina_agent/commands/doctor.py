@@ -32,6 +32,12 @@ def doctor(skip_mcp: bool = typer.Option(False, "--skip-mcp",
         for name in ("ocamlmerlin", "claude"):
             p = shutil.which(name, path=aenv.get("PATH"))
             row(name, bool(p), p or "not on PATH")
+        p = shutil.which("ocamllsp", path=aenv.get("PATH"))
+        row("ocamllsp", True if p else None,
+            p or "not installed; Claude's LSP tool unavailable, merlin tools still work")
+        link = paths.SKILLS_DIR_LINK
+        linked = link.is_symlink() and link.resolve() == paths.PLUGIN.resolve()
+        row("lsp plugin", linked, f"{link} -> {paths.PLUGIN}" if linked else f"{link} not linked; run mina-agent init")
     binp = agent.mina_agent_bin()
     row("mina-agent", bool(shutil.which("mina-agent")), binp)
     tool = paths.describe_dune_bin(e.repo)

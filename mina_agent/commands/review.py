@@ -2,6 +2,7 @@
 read-only Claude session pre-oriented on it."""
 import shutil
 import subprocess
+import sys
 from typing import Optional
 
 import typer
@@ -65,20 +66,21 @@ def review(pr: Optional[int] = typer.Option(None, "--pr", help="Pull request num
 
     try:
         try:
-            pack, pack_md, diff_md = R.build(e.repo, pr, checked_out=live)
+            pack, pack_md, review_html = R.build(e.repo, pr, checked_out=live)
         except RuntimeError as ex:
             typer.echo(f"review: {ex}", err=True)
             raise typer.Exit(1)
         libs = sorted({c.unit["key"] for c in pack.files if c.unit and c.unit["kind"] == "lib"})
         typer.echo(f"PR #{pr}: {pack.meta['title']}\n  {len(pack.files)} file(s) in "
                    f"{len(libs)} librar{'y' if len(libs) == 1 else 'ies'}: {', '.join(libs) or '-'}\n"
-                   f"  pack {pack_md}\n  diff {diff_md}\n  PR code {'checked out' if live else 'not checked out (--checkout)'}",
-                   err=True)
+                   f"  pack {pack_md}\n  review page {review_html}\n"
+                   f"  PR code {'checked out' if live else 'not checked out (--checkout)'}", err=True)
         if open_:
-            if shutil.which("code"):
-                subprocess.run(["code", str(pack_md)])
+            opener = "open" if sys.platform == "darwin" else ("xdg-open" if shutil.which("xdg-open") else None)
+            if opener:
+                subprocess.run([opener, str(review_html)])   # semantic diffs + clickable map in the browser
             else:
-                typer.echo("--open: `code` is not on PATH (VS Code: Shell Command: Install 'code' command in PATH)", err=True)
+                typer.echo(f"--open: open {review_html} in a browser", err=True)
         msg = R.first_message(pack, live)
         if dry_run:
             print(f"[dry-run] first message: {len(msg)} characters, begins:\n" + msg[:1200] + "\n...")

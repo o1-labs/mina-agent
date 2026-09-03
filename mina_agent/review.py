@@ -10,6 +10,7 @@
 The model phase reads the pack and diff; a human reads them too. Locations
 are vscode://file links so they open in the editor.
 """
+import html
 import json
 import os
 import shutil
@@ -291,10 +292,10 @@ def order_files(pack):
     return out
 
 
-def dot_forest(pack, diff_files, link_root):
+def dot_forest(pack, url_for):
     """Graphviz DOT: changed files as nodes, grouped in per-unit clusters,
-    dependency edges between units (foundation at top). Each node's URL opens
-    that file's difft. Foundation-first reading order runs top to bottom."""
+    dependency edges between units (foundation at top). Each node's URL is
+    url_for(path). Foundation-first reading order runs top to bottom."""
     order, reduced, _ = topo_units(pack)
     by_unit = {}
     for c in pack.files:
@@ -310,9 +311,8 @@ def dot_forest(pack, diff_files, link_root):
             node = f"n{nid}"
             rep.setdefault((kind, key), node)
             label = os.path.basename(c.path) + ("  (interface)" if is_interface(c) else "")
-            url = vscode_link(diff_files[c.path])
             fill = "#f6d365" if is_interface(c) else "#eef3fb"
-            L.append(f'    {node} [label="{label}", URL="{url}", fillcolor="{fill}"];')
+            L.append(f'    {node} [label="{label}", URL="{url_for(c.path)}", fillcolor="{fill}"];')
         L.append("  }")
     # edges dependency -> dependent (foundation points up-tree to dependents)
     for dependent, deps in reduced.items():
@@ -320,11 +320,9 @@ def dot_forest(pack, diff_files, link_root):
             if ("lib", d) in rep and ("lib", dependent) in rep:
                 L.append(f'  {rep[("lib", d)]} -> {rep[("lib", dependent)]} '
                          f'[ltail="cluster_lib_{d}", lhead="cluster_lib_{dependent}"];')
-    # non-unit files (config, changelog) as loose roots
-    for c in by_unit.get(None, []):
+    for c in by_unit.get(None, []):          # non-unit files (config, changelog) as loose roots
         nid += 1
-        L.append(f'  n{nid} [label="{os.path.basename(c.path)}", URL="{vscode_link(diff_files[c.path])}", '
-                 f'fillcolor="#f0f0f0"];')
+        L.append(f'  n{nid} [label="{os.path.basename(c.path)}", URL="{url_for(c.path)}", fillcolor="#f0f0f0"];')
     L.append("}")
     return "\n".join(L)
 
@@ -334,12 +332,108 @@ def render_map(pack, diff_files, link_root):
     markdown to embed. Falls back to a note when graphviz is absent."""
     if shutil.which("dot"):
         svg = pack.out / "map.svg"
-        r = subprocess.run(["dot", "-Tsvg", "-o", str(svg)], input=dot_forest(pack, diff_files, link_root),
+        r = subprocess.run(["dot", "-Tsvg", "-o", str(svg)],
+                           input=dot_forest(pack, lambda p: vscode_link(diff_files[p])),
                            capture_output=True, text=True)
         if r.returncode == 0 and svg.exists():
             return (f"![change map]({svg.name})\n\n(foundation at top, dependents below; yellow = interface. "
-                    f"Open [map.svg]({vscode_link(svg)}) directly to click a node through to its diff.)")
+                    "The image is static; use the interactive HTML page below for clickable nodes and diffs.)")
     return "(install graphviz for a rendered map: brew install graphviz)"
+
+
+# --------------------------------------------------------------------------
+# review.html: clickable change map + semantic (difftastic) diffs in one page
+# --------------------------------------------------------------------------
+
+def _svg_inline(pack):
+    """Graphviz SVG with node links as in-page anchors (#file-slug)."""
+    if not shutil.which("dot"):
+        return None
+    dot = dot_forest(pack, lambda p: "#" + _diff_slug(p))
+    r = subprocess.run(["dot", "-Tsvg"], input=dot, capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    svg = r.stdout[r.stdout.index("<svg"):]           # drop xml/doctype preamble
+    return svg.replace("%23", "#")                    # graphviz percent-encodes '#'
+
+
+def build_html(repo, pack, diff_files):
+    """Self-contained review.html: PR header, topological table of contents,
+    inline clickable change map, and every file's difftastic diff rendered in
+    colour. No server, opens in any browser."""
+    from . import ansi
+    m = pack.meta
+    difft = shutil.which("difft")
+    order = order_files(pack)
+
+    toc = []
+    for rank, c, unit in order:
+        slug = _diff_slug(c.path)
+        where = f" · {unit}" if unit else ""
+        tag = " (interface)" if is_interface(c) else ""
+        toc.append(f'<li><a href="#{slug}">{rank}. {html.escape(c.path)}</a>'
+                   f'<span class="dim">{html.escape(tag + where)}</span></li>')
+
+    sections = []
+    for rank, c, unit in order:
+        slug = _diff_slug(c.path)
+        base_f, head_f = pack.out / "base" / c.path, pack.out / "head" / c.path
+        if difft and base_f.exists() and head_f.exists():
+            raw = subprocess.run([difft, "--color=always", "--display", "side-by-side", "--width", "150",
+                                  str(base_f), str(head_f)], capture_output=True, text=True).stdout
+            body = ansi.to_html(raw)
+        else:
+            raw = subprocess.run(["git", "diff", pack.merge_base, pack.head, "--", c.path],
+                                 cwd=repo, capture_output=True, text=True).stdout
+            body = html.escape(raw)
+        head_link = vscode_link(Path(pack.out) / "head" / c.path)
+        sections.append(
+            f'<section id="{slug}"><h2>{rank}. {html.escape(c.path)} '
+            f'<span class="meta">{c.status} +{c.added} -{c.deleted}{" · interface" if is_interface(c) else ""}'
+            f'{(" · " + html.escape(unit)) if unit else ""}</span> '
+            f'<a class="open" href="{head_link}">open file</a></h2>'
+            f'<pre>{body}</pre></section>')
+
+    svg = _svg_inline(pack)
+    map_block = (f'<div class="map">{svg}</div>' if svg
+                 else '<p class="dim">install graphviz for the change map: brew install graphviz</p>')
+    return HTML_TEMPLATE.format(
+        title=html.escape(f"PR #{pack.number}: {m['title']}"),
+        subtitle=html.escape(f"{m['author']['login']} · {m['headRefName']} -> {m['baseRefName']} · "
+                             f"+{m['additions']} -{m['deletions']} · {len(pack.files)} file(s)"),
+        url=m["url"], toc="\n".join(toc), map=map_block, sections="\n".join(sections))
+
+
+HTML_TEMPLATE = """<!doctype html><html><head><meta charset="utf-8">
+<title>{title}</title><style>
+ :root {{ --bg:#0f1115; --panel:#161a22; --line:#252b37; --fg:#d6dae2; --dim:#8a92a3; --link:#5aa9e6; }}
+ * {{ box-sizing:border-box }}
+ body {{ margin:0; background:var(--bg); color:var(--fg); font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace }}
+ a {{ color:var(--link); text-decoration:none }} a:hover {{ text-decoration:underline }}
+ header {{ padding:14px 18px; border-bottom:1px solid var(--line) }}
+ header h1 {{ margin:0 0 4px; font-size:15px }} .dim {{ color:var(--dim) }}
+ .cols {{ display:grid; grid-template-columns: 300px 1fr; gap:0; align-items:start }}
+ nav {{ position:sticky; top:0; align-self:start; max-height:100vh; overflow:auto; padding:12px 14px; border-right:1px solid var(--line) }}
+ nav h2 {{ font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:10px 0 6px }}
+ nav ol {{ list-style:none; margin:0; padding:0 }} nav li {{ margin:3px 0 }}
+ .map {{ background:var(--panel); border-radius:6px; padding:10px; margin:8px 0; overflow:auto }}
+ .map svg {{ max-width:100% }}
+ main {{ padding:12px 18px; overflow:auto }}
+ section {{ margin:0 0 22px; border:1px solid var(--line); border-radius:6px }}
+ section h2 {{ font-size:13px; margin:0; padding:8px 12px; background:var(--panel); border-bottom:1px solid var(--line);
+   position:sticky; top:0 }}
+ section .meta {{ color:var(--dim); font-weight:normal }} section .open {{ float:right; font-weight:normal }}
+ pre {{ margin:0; padding:10px 12px; overflow:auto; white-space:pre; font-size:12px; line-height:1.45 }}
+</style></head><body>
+<header><h1>{title}</h1><div class="dim">{subtitle} · <a href="{url}">{url}</a></div></header>
+<div class="cols">
+ <nav>
+   <h2>change map</h2>{map}
+   <h2>reading order</h2><ol>{toc}</ol>
+   <p class="dim">Sorted so a file comes after everything it depends on. Click a map node or a list item.</p>
+ </nav>
+ <main>{sections}</main>
+</div></body></html>"""
 
 
 # --------------------------------------------------------------------------
@@ -410,7 +504,9 @@ def render_pack(repo, pack, link_root, diff_files):
         where = f" — {unit}" if unit else ""
         tag = " (interface)" if is_interface(c) else ""
         L.append(f"{rank}. [{c.path}]({difflink(c)}){tag}{where}  ([source]({link(c)}))")
-    L += ["", "## Change map", "", render_map(pack, diff_files, link_root), ""]
+    L += ["", "## Change map", "", render_map(pack, diff_files, link_root),
+          "", f"**Best view:** open [review.html]({vscode_link(pack.out / 'review.html')}) in a browser "
+          "(`mina-agent review --open`) for a clickable map and the semantic diffs in colour.", ""]
     L += ["## Test candidates for the changed code", ""]
     L += [f"- `{t['name']}` [{t['cost']}] — {t['reason']}" for t in tests] or ["- (none found)"]
     L += ["", f"Full diff: [diff.md]({vscode_link(pack.out / 'diff.md')}) · per-file diffs under "
@@ -583,9 +679,10 @@ def build(repo, number, checked_out=False):
     diff_files = per_file_diffs(repo, pack)
     (pack.out / "pack.md").write_text(render_pack(repo, pack, link_root, diff_files))
     (pack.out / "diff.md").write_text(render_diff(repo, pack))
+    (pack.out / "review.html").write_text(build_html(repo, pack, diff_files))
     (pack.out / "meta.json").write_text(json.dumps(
         {"number": number, "merge_base": base, "head": head, "base_ref": meta["baseRefName"],
          "head_ref": meta["headRefName"], "url": meta["url"],
          "files": [{"path": c.path, "status": c.status, "added": c.added, "deleted": c.deleted,
                     "unit": c.unit, "interface": is_interface(c)} for c in pack.files]}, indent=1))
-    return pack, pack.out / "pack.md", pack.out / "diff.md"
+    return pack, pack.out / "pack.md", pack.out / "review.html"

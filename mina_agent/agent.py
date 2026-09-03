@@ -2,7 +2,8 @@
 
 Everything that launches a model session goes through here:
   * headless phases (`mina-agent fix-build-error ...`) via the Claude Agent
-    SDK's query(), with in-process hooks and a serialized run log;
+    SDK's query(), with an in-process post-edit check hook and a serialized
+    run log (Bash is removed from phases, and the deny rules ride along);
   * interactive sessions (`mina-agent discuss`) via the `claude` TUI.
 
 Both get the same walls: the deny list from data/settings.template.json, the
@@ -65,26 +66,9 @@ def post_edit_check_output(tool_input):
                                    "additionalContext": json.dumps(ctx)}}
 
 
-def pre_bash_guard_output(tool_input):
-    """PreToolUse Bash: deny raw toolchain / environment mutation commands."""
-    from . import guard
-    hit = guard.offending((tool_input or {}).get("command") or "")
-    if not hit:
-        return {}
-    sub, word, why = hit
-    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                   "permissionDecisionReason":
-                                       f"blocked `{sub}`: `{word}` is not allowed here; {why}"}}
-
-
 async def _post_edit_cb(inp, tool_use_id, ctx):
     return record_hook("PostToolUse", inp.get("tool_name"), inp.get("tool_input"),
                        post_edit_check_output(inp.get("tool_input")))
-
-
-async def _pre_bash_cb(inp, tool_use_id, ctx):
-    return record_hook("PreToolUse", "Bash", inp.get("tool_input"),
-                       pre_bash_guard_output(inp.get("tool_input")))
 
 
 # --------------------------------------------------------------------------
@@ -133,8 +117,7 @@ def build_options(phase, env, *, max_turns=None, max_budget_usd=None, model=None
         plugins=([{"type": "local", "path": str(lsp.plugin_dir(env.repo))}]
                  if lsp.plugin_dir(env.repo) else []),
         include_hook_events=True,
-        hooks={"PostToolUse": [HookMatcher(matcher="Edit|Write", hooks=[_post_edit_cb], timeout=600)],
-               "PreToolUse": [HookMatcher(matcher="Bash", hooks=[_pre_bash_cb], timeout=10)]},
+        hooks={"PostToolUse": [HookMatcher(matcher="Edit|Write", hooks=[_post_edit_cb], timeout=600)]},
         stderr=lambda line: STDERR.append(line),
     )
 

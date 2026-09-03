@@ -24,15 +24,26 @@ def post_edit():
         print(json.dumps(out))
 
 
+MESSAGES = {
+    "tools": "runs the OCaml toolchain directly; the mina-harness MCP tools (build / check / "
+             "check_dependents / test / test_one) run dune in the right switch with structured output",
+    "env": "mutates or bypasses the build environment (opam/nix/cargo/make/pip), which this harness never does",
+}
+
+
 @app.command("pre-bash")
-def pre_bash():
-    """PreToolUse Bash: block raw dune/opam/nix/cargo/make and environment mutation."""
-    from .. import guard
-    hit = guard.offending((_payload().get("tool_input") or {}).get("command") or "")
-    if hit:
-        sub, word, why = hit
-        sys.stderr.write(f"blocked `{sub}`: `{word}` is not allowed here; {why}\n")
-        raise typer.Exit(2)
+def pre_bash(why: str = typer.Option("tools", "--why", help="Which explanation to attach: tools | env.")):
+    """PreToolUse Bash: attach an explanation, never block.
+
+    Reached only for commands Claude Code's own Bash matcher flags through the
+    hook `if` rules in settings (that matcher over-matches on purpose, e.g. on
+    quoted text). The deny rules alone decide whether the command runs; this
+    adds context so a denial comes with the reason and the alternative.
+    """
+    cmd = (_payload().get("tool_input") or {}).get("command") or ""
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                      "additionalContext": f"harness: if `{cmd[:100]}` is denied, it is because it "
+                                           f"{MESSAGES.get(why, MESSAGES['tools'])}."}}))
 
 
 @app.command("pre-commit")

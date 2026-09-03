@@ -48,8 +48,8 @@ def discuss(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     """Start an interactive Claude session with the harness tools and walls.
 
     Read-only by default: the model asks before editing or running tests, and
-    the build-config / Rust-boundary deny rules and the raw-toolchain guard
-    apply structurally. Conclusions land in harness/state/NOTES.md.
+    the build-config / Rust-boundary edit rules and the raw-toolchain deny
+    rules apply structurally. Conclusions land in harness/state/NOTES.md.
     """
     from .. import env as envmod, graph, tools
     e = envmod.detect()

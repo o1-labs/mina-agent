@@ -537,8 +537,8 @@ def facts() -> list:
                + ". type_at/definition describe code as last compiled; check decides whether "
                "an edit compiles; after every Edit of a .ml/.mli file a hook runs check "
                "automatically and returns its diagnostics. Raw dune/opam/nix/cargo/make "
-               "commands are blocked; build-config and Rust boundary files are deny-listed "
-               "for edits.")
+               "commands are denied by permission rules; checked-in scripts run normally; "
+               "build-config and Rust boundary files are deny-listed for edits.")
     return out
 
 

@@ -1,5 +1,5 @@
 {
-  "_comment": "Installed into .claude/settings.local.json by `mina-agent init`, which points the hook commands at the mina-agent binary. Docs relied on: code.claude.com/docs/en/hooks (Matcher field semantics, Hook stdin JSON input, Exit code semantics, JSON stdout output format) and code.claude.com/docs/en/permissions (Read and Edit: / anchors at the session cwd for local settings, single-segment deny patterns match at any depth, deny is evaluated before allow and is not bypassed by hooks).",
+  "_comment": "Installed into .claude/settings.local.json by `mina-agent init`, which points the hook commands at the mina-agent binary. The PreToolUse Bash entries are gated by Claude Code's own permission-rule matcher via the hook `if` field (hooks docs: Hook object fields), so no shell parsing happens in the harness; the deny rules below are the enforcement, the hook only supplies the explanation. Docs relied on: code.claude.com/docs/en/hooks (Matcher field semantics, Hook stdin JSON input, Exit code semantics, JSON stdout output format) and code.claude.com/docs/en/permissions (Read and Edit: / anchors at the session cwd for local settings, single-segment deny patterns match at any depth, deny is evaluated before allow and is not bypassed by hooks).",
   "permissions": {
     "deny": [
       "Edit(/flake.nix)",
@@ -48,7 +48,206 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mina-agent hook pre-bash",
+            "if": "Bash(dune *)",
+            "command": "mina-agent hook pre-bash --why tools",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(dune)",
+            "command": "mina-agent hook pre-bash --why tools",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(ocamlfind *)",
+            "command": "mina-agent hook pre-bash --why tools",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(ocamlfind)",
+            "command": "mina-agent hook pre-bash --why tools",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(ocamlopt *)",
+            "command": "mina-agent hook pre-bash --why tools",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(ocamlopt)",
+            "command": "mina-agent hook pre-bash --why tools",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(ocamlc *)",
+            "command": "mina-agent hook pre-bash --why tools",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(ocamlc)",
+            "command": "mina-agent hook pre-bash --why tools",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(opam *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(opam)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(nix *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(nix)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(nix-env *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(nix-env)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(nix-shell *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(nix-shell)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(nix-build *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(nix-build)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(cargo *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(cargo)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(rustup *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(rustup)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(make *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(make)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(pip *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(pip)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(pip3 *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(pip3)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(./scripts/update-opam-switch.sh *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(./scripts/update-opam-switch.sh)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(scripts/update-opam-switch.sh *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(scripts/update-opam-switch.sh)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(./scripts/pin-external-packages.sh *)",
+            "command": "mina-agent hook pre-bash --why env",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "if": "Bash(./scripts/pin-external-packages.sh)",
+            "command": "mina-agent hook pre-bash --why env",
             "timeout": 10
           }
         ]

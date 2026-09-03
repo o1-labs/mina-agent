@@ -185,3 +185,18 @@ cost = "integration"
 measured = 0
 modes = []
 libraries = []
+
+# ---------------------------------------------------------------------------
+# plugins: external Claude Code plugins loaded ONLY by harness sessions
+# (discuss, review). `mina-agent init` clones each into harness/state/plugins
+# at the pinned ref; nothing is vendored here or installed into the user's
+# Claude configuration. Pin a commit or tag, not a branch.
+# ---------------------------------------------------------------------------
+
+[[plugins]]
+name = "adhd"
+url = "https://github.com/UditAkhourii/adhd"
+ref = "16dc239"
+# Divergent-ideation skill: /adhd:adhd or "ADHD mode". Fans out ~10 subagents
+# through the Agent tool, so it costs several dollars and a minute or two per
+# use; its own pre-flight gate skips it for closed questions.

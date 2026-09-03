@@ -147,13 +147,19 @@ def review_tools(e):
     yield Check("difftastic", OK if d else NOTE, d or "not installed; review diffs fall back to git diff (brew install difftastic)")
 
 
+def external_plugins(e):
+    from .. import plugins
+    for name, ok, detail in plugins.status(e.repo):
+        yield Check(f"plugin {name}", OK if ok else FAIL, detail)
+
+
 def notes(e):
     p = paths.notes_file(e.repo)
     yield Check("notes", NOTE, str(p) if p.exists() else "none yet (created by discuss)")
 
 
 CHECKS = [toolchain, binaries, lsp, opam_export, graph, session_config, no_leakage, git_hook, linters,
-          review_tools, notes]
+          review_tools, external_plugins, notes]
 
 
 def render(checks):

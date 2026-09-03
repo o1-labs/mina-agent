@@ -235,6 +235,9 @@ def interactive_argv(first_message, repo, extra_disallowed=()):
             "--mcp-config", json.dumps(mcp_config()), "--strict-mcp-config"]
     if lsp.plugin_dir(repo):
         argv += ["--plugin-dir", str(lsp.plugin_dir(repo))]
+    from . import plugins
+    for d in plugins.dirs(repo):          # declared external plugins, synced by init
+        argv += ["--plugin-dir", str(d)]
     return argv
 
 

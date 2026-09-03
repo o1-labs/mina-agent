@@ -21,7 +21,7 @@ def install_git_hook(repo):
 
 
 def init():
-    """Prepare this checkout: graph, LSP plugin, git pre-commit hook.
+    """Prepare this checkout: graph, LSP plugin, declared plugins, git pre-commit hook.
 
     Writes nothing into the repo's Claude settings, the MCP registry, or the
     skills directory; the harness applies only when invoked (discuss, phases).
@@ -44,4 +44,7 @@ def init():
         print(f"lsp: {path} ({source}) -> plugin {out} (passed to sessions with --plugin-dir)")
     else:
         print(f"lsp: {source}; Claude's LSP tool unavailable, merlin tools still work")
+    from .. import plugins
+    for name, d, msg in plugins.sync(e.repo):
+        print(f"plugin {name}: {d} {msg}")
     print("next: mina-agent doctor")

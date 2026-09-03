@@ -32,59 +32,94 @@ def _short(v, n=110):
     return trajectory.short(v, n)
 
 
+def _maybe_json(v):
+    """Tool results arrive as JSON strings; parse them for structured display."""
+    if isinstance(v, list):
+        v = " ".join(b.get("text", "") for b in v if isinstance(b, dict)) or v
+    if isinstance(v, str):
+        t = v.strip()
+        if t[:1] in "{[":
+            try:
+                return json.loads(t)
+            except ValueError:
+                pass
+    return v
+
+
 def _run_events(path):
     """Events for one run log, in file order, each carrying a synthetic
-    timestamp (run start + line index) so runs interleave sensibly with lint."""
+    timestamp (run start + line index) so runs interleave sensibly with lint.
+    A tool call and its result are one event."""
     m = re.match(r"^(\d{8}T\d{6}Z)-(.+)\.jsonl$", path.name)
     start, phase = (m.group(1), m.group(2)) if m else ("", path.stem)
     base = _iso(start)
     traj = trajectory.Trajectory()
-    events = []
+    events, call_events = [], {}
     with open(path, encoding="utf-8") as fh:
         for i, line in enumerate(fh):
             try:
                 rec = json.loads(line)
             except ValueError:
                 continue
-            before = len(traj.calls)
             traj.feed(rec)
             ts = f"{base}#{i:05d}"
             k = rec.get("kind")
-            ev = dict(id=f"{path.stem}:{i}", ts=ts, source=path.stem, phase=phase, detail=rec)
+            ev = dict(id=f"{path.stem}:{i}", ts=ts, source=path.stem, phase=phase)
             if k == "SystemMessage" and rec.get("subtype") == "init":
                 tools = rec.get("data", {}).get("tools") or []
                 bash = "Bash" in tools
+                harness = [trajectory.tool_label(t) for t in tools if t.startswith("mcp__mina-harness__")]
                 events.append({**ev, "kind": "run.start", "level": "bad" if bash else "ok",
-                               "summary": f"run started · {phase} · {len([t for t in tools if t.startswith('mcp__mina-harness__')])} harness tools · "
-                                          f"bash {'PRESENT' if bash else 'absent'}"})
+                               "summary": f"run started · {phase} · {len(harness)} harness tools · bash {'PRESENT' if bash else 'absent'}",
+                               "detail": {"phase": phase, "session": rec.get("data", {}).get("session_id"),
+                                          "bash_present": bash, "harness_tools": harness,
+                                          "builtin_tools": [t for t in tools if not t.startswith("mcp__")],
+                                          "model": rec.get("data", {}).get("model")}})
             elif k == "AssistantMessage":
                 for b in rec.get("content") or []:
                     if b.get("block") == "ToolUseBlock":
                         c = traj.by_id.get(b["id"])
-                        events.append({**ev, "id": f"{ev['id']}:{b['id']}", "kind": "tool.call", "level": "info",
-                                       "summary": "→ " + (traj.progress_line(c).strip() if c else b["name"])})
+                        e = {**ev, "id": f"{ev['id']}:{b['id']}", "kind": "tool", "level": "info",
+                             "summary": (traj.progress_line(c).strip() if c else b["name"]) + " · pending",
+                             "detail": {"tool": trajectory.tool_label(b["name"]), "input": b.get("input"), "result": None}}
+                        events.append(e)
+                        call_events[b["id"]] = e
                     elif b.get("block") == "TextBlock" and b.get("text", "").strip():
                         events.append({**ev, "id": f"{ev['id']}:text", "kind": "assistant", "level": "dim",
-                                       "summary": "assistant: " + _short(b["text"].strip().replace("\n", " "), 140)})
+                                       "summary": "assistant: " + _short(b["text"].strip().replace("\n", " "), 140),
+                                       "detail": {"text": b["text"]}})
             elif k == "UserMessage":
                 for b in rec.get("content") or []:
-                    if b.get("block") == "ToolResultBlock" and b.get("tool_use_id") in traj.by_id:
+                    if b.get("block") == "ToolResultBlock" and b.get("tool_use_id") in call_events:
                         c = traj.by_id[b["tool_use_id"]]
-                        events.append({**ev, "id": f"{ev['id']}:{b['tool_use_id']}", "kind": "tool.result",
-                                       "level": "bad" if c["is_error"] else "ok",
-                                       "summary": f"← {trajectory.tool_label(c['name'])} " + _short(traj.result_text(c), 120)})
+                        e = call_events[b["tool_use_id"]]
+                        e["level"] = "bad" if c["is_error"] else "ok"
+                        e["summary"] = f"{traj.progress_line(c).strip()} · {_short(traj.result_text(c), 110)}"
+                        e["detail"]["result"] = _maybe_json(b.get("content"))
+                        e["detail"]["is_error"] = c["is_error"]
             elif k == "HarnessHook":
                 h = traj.hooks[-1] if traj.hooks else {"name": "?", "output": rec.get("output")}
                 out = rec.get("output") or {}
-                denied = (out.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny"
+                hso = out.get("hookSpecificOutput") or {}
+                denied = hso.get("permissionDecision") == "deny"
+                ctx = hso.get("additionalContext")
                 events.append({**ev, "kind": "hook", "level": "bad" if denied else "ok",
-                               "summary": f"hook {h['name']} → {traj.hook_detail(h)}"})
+                               "summary": f"hook {h['name']} · {traj.hook_detail(h)}",
+                               "detail": {"hook": h["name"], "input": rec.get("input"),
+                                          "decision": hso.get("permissionDecision"),
+                                          "reason": hso.get("permissionDecisionReason"),
+                                          "context": _maybe_json(ctx) if ctx else None}})
             elif k == "ResultMessage":
                 ok = rec.get("subtype") == "success" and not rec.get("is_error")
+                den = rec.get("permission_denials") or []
                 events.append({**ev, "kind": "run.end", "level": "ok" if ok else "bad",
                                "summary": f"run finished · {rec.get('subtype')} · {rec.get('num_turns')} turns · "
                                           f"${round(rec.get('total_cost_usd') or 0, 3)} · {round((rec.get('duration_ms') or 0) / 1000)}s"
-                                          + (f" · {len(rec.get('permission_denials') or [])} denial(s)" if rec.get("permission_denials") else "")})
+                                          + (f" · {len(den)} denial(s)" if den else ""),
+                               "detail": {"status": rec.get("subtype"), "turns": rec.get("num_turns"),
+                                          "cost_usd": rec.get("total_cost_usd"), "duration_s": round((rec.get("duration_ms") or 0) / 1000),
+                                          "session": rec.get("session_id"), "permission_denials": den,
+                                          "report": rec.get("result")}})
     return events
 
 

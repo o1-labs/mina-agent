@@ -146,31 +146,84 @@ def flags(pack):
     return out
 
 
-def blast_radius(pack):
+def _unit_deps(key, kind):
+    """Direct dependency library names of a changed unit, from derived.json."""
     from . import tools
-    libs = sorted({c.unit["key"] for c in pack.files if c.unit and c.unit["kind"] == "lib"})
-    out = {}
-    for lib in libs:
-        d = tools.dependents_of(lib)
-        out[lib] = d
+    g = tools.GRAPH.get()
+    table = {"lib": "libraries", "exe": "executables", "test": "tests"}[kind]
+    rec = g[table].get(key) or {}
+    return rec.get("deps", [])
+
+
+def _reaches(src_key, src_kind, targets):
+    """The libraries in `targets` reachable from a unit via the dependency
+    graph, following library deps transitively through unchanged libs too."""
+    from . import tools
+    g = tools.GRAPH.get()
+    seen, out, stack = set(), set(), list(_unit_deps(src_key, src_kind))
+    while stack:
+        lib = stack.pop()
+        if lib in seen or lib not in g["libraries"]:
+            continue
+        seen.add(lib)
+        if lib in targets:
+            out.add(lib)
+        stack.extend(g["libraries"][lib]["deps"])
     return out
 
 
-def reading_order(pack):
-    """Changed libraries, dependencies before dependents (Kahn over the
-    changed subgraph); then non-library units."""
-    from . import tools
-    g = tools.GRAPH.get()
-    libs = sorted({c.unit["key"] for c in pack.files if c.unit and c.unit["kind"] == "lib"})
-    remaining, order = set(libs), []
+def changed_units(pack):
+    """The distinct changed dune units, as (kind, key). Files with no unit
+    (config, changelog) are returned separately."""
+    units, non = [], []
+    seen = set()
+    for c in pack.files:
+        if c.unit:
+            k = (c.unit["kind"], c.unit["key"])
+            if k not in seen:
+                seen.add(k)
+                units.append(k)
+        elif c.path not in non:
+            non.append(c.path)
+    return units, non
+
+
+def topo_units(pack):
+    """Topological order of the changed units, dependencies before dependents,
+    transitive-aware (edges count even when the path runs through unchanged
+    libraries). Returns (order, edges, roots):
+      order  list of (kind, key), foundation first
+      edges  transitive-reduced {dependent_key: [dependency_key, ...]} among
+             changed *library* units (an arrow points dependency -> dependent)
+      roots  keys with no changed-library dependency (forest roots)
+    """
+    units, _ = changed_units(pack)
+    lib_keys = {key for kind, key in units if kind == "lib"}
+    # dep[u] = changed libs that u depends on (u is a lib/exe/test)
+    dep = {}
+    for kind, key in units:
+        targets = lib_keys - {key}
+        dep[(kind, key)] = _reaches(key, kind, targets)
+    # topo sort (Kahn): a unit is ready when all its changed-lib deps are placed
+    remaining = list(units)
+    placed, order = set(), []
     while remaining:
-        ready = sorted(l for l in remaining if not (set(g["libraries"][l]["deps"]) & remaining - {l}))
-        if not ready:  # cycle, should not happen in a dune graph
-            ready = sorted(remaining)
+        ready = [u for u in remaining if dep[u] <= placed]
+        if not ready:                       # cycle guard (shouldn't happen)
+            ready = remaining[:]
+        ready.sort(key=lambda u: (u[0] != "lib", u[1]))
         order.extend(ready)
-        remaining -= set(ready)
-    others = sorted({c.unit["key"] for c in pack.files if c.unit and c.unit["kind"] != "lib"})
-    return order, others
+        placed |= {key for _, key in ready}
+        remaining = [u for u in remaining if u not in ready]
+    # transitive reduction for the map: keep dep A->B only if no changed lib C
+    # with A->C and C->B (edges are among library units)
+    libdep = {key: (dep[("lib", key)] & lib_keys) for key in lib_keys}
+    reduced = {}
+    for a, bs in libdep.items():
+        keep = {b for b in bs if not any(b in libdep.get(c, set()) for c in bs if c != b)}
+        reduced[a] = sorted(keep)
+    roots = sorted(k for k in lib_keys if not libdep[k])
+    return order, reduced, roots
 
 
 def test_candidates(pack):
@@ -190,68 +243,103 @@ def test_candidates(pack):
     return sorted(out, key=lambda x: order.get(x["cost"], 9))
 
 
-def _map_edges(pack, radius, max_dependents=8):
-    """(changed set, edges as (src, dst), extra label per lib). Edge direction
-    is dependency -> dependent, i.e. an arrow points from a library to the
-    thing that would be affected by changing it."""
-    from . import tools
-    g = tools.GRAPH.get()
-    changed = set(radius)
-    edges, extra = [], {}
-    for lib in radius:                       # changed -> changed
-        for dep in g["libraries"][lib]["deps"]:
-            if dep in changed:
-                edges.append((dep, lib))
-    for lib, d in radius.items():            # changed -> its dependents
-        for dep in d["libraries"][:max_dependents]:
-            if dep not in changed:
-                edges.append((lib, dep))
-        if len(d["libraries"]) > max_dependents:
-            extra[lib] = len(d["libraries"]) - max_dependents
-    return changed, edges, extra
+def _diff_slug(path):
+    return path.replace("/", "__")
 
 
-def dot(pack, radius, max_dependents=8):
-    """Graphviz DOT for the change map. Rendered to SVG when `dot` is on PATH."""
-    changed, edges, extra = _map_edges(pack, radius, max_dependents)
-    L = ['digraph changemap {', '  rankdir=LR;', '  node [shape=box, style=rounded, fontname="monospace", fontsize=10];',
-         '  edge [color="#888888", arrowsize=0.7];']
-    for lib in radius:
-        L.append(f'  "{lib}" [style="rounded,filled", fillcolor="#f6d365"];')
-    for src, dst in edges:
-        L.append(f'  "{src}" -> "{dst}";')
-    for lib, n in extra.items():
-        L.append(f'  "+{n} more\\n(dependents of {lib})" [shape=note, fillcolor="#f0f0f0", style=filled];')
-        L.append(f'  "{lib}" -> "+{n} more\\n(dependents of {lib})";')
+def per_file_diffs(repo, pack):
+    """Write one difft per changed file to diffs/<slug>.md; return {path: file}."""
+    difft = shutil.which("difft")
+    outdir = pack.out / "diffs"
+    outdir.mkdir(parents=True, exist_ok=True)
+    written = {}
+    for c in pack.files:
+        base_f, head_f = pack.out / "base" / c.path, pack.out / "head" / c.path
+        body = None
+        if difft and base_f.exists() and head_f.exists():
+            r = subprocess.run([difft, "--display", "inline", "--color", "never", "--width", "120",
+                                str(base_f), str(head_f)], capture_output=True, text=True)
+            body = "```\n" + r.stdout.strip() + "\n```"
+        else:
+            r = subprocess.run(["git", "diff", pack.merge_base, pack.head, "--", c.path],
+                               cwd=repo, capture_output=True, text=True)
+            body = "```diff\n" + r.stdout.strip() + "\n```"
+        f = outdir / (_diff_slug(c.path) + ".md")
+        f.write_text(f"# {c.path}  ({c.status} +{c.added} -{c.deleted})\n\n{body}\n")
+        written[c.path] = f
+    return written
+
+
+def order_files(pack):
+    """Changed files in dependency order: for each unit in topological order,
+    its files (interface first); then files with no unit. Returns a list of
+    (rank, file_change, unit_key_or_None)."""
+    order, _, _ = topo_units(pack)
+    _, non = changed_units(pack)
+    by_unit = {}
+    for c in pack.files:
+        key = (c.unit["kind"], c.unit["key"]) if c.unit else None
+        by_unit.setdefault(key, []).append(c)
+    out, rank = [], 0
+    for u in order:
+        for c in sorted(by_unit.get(u, []), key=lambda c: (not is_interface(c), c.path)):
+            rank += 1
+            out.append((rank, c, u[1]))
+    for c in by_unit.get(None, []):
+        rank += 1
+        out.append((rank, c, None))
+    return out
+
+
+def dot_forest(pack, diff_files, link_root):
+    """Graphviz DOT: changed files as nodes, grouped in per-unit clusters,
+    dependency edges between units (foundation at top). Each node's URL opens
+    that file's difft. Foundation-first reading order runs top to bottom."""
+    order, reduced, _ = topo_units(pack)
+    by_unit = {}
+    for c in pack.files:
+        by_unit.setdefault((c.unit["kind"], c.unit["key"]) if c.unit else None, []).append(c)
+    L = ['digraph changes {', '  rankdir=TB;', '  compound=true;', '  node [shape=box, style="rounded,filled", '
+         'fillcolor="#eef3fb", fontname="monospace", fontsize=10];', '  edge [color="#888888", arrowsize=0.7];']
+    rep = {}   # unit -> a representative node id, for cluster-to-cluster edges
+    nid = 0
+    for kind, key in order:
+        L.append(f'  subgraph "cluster_{kind}_{key}" {{ label="{key}"; style="rounded"; color="#c9d4e6";')
+        for c in sorted(by_unit.get((kind, key), []), key=lambda c: (not is_interface(c), c.path)):
+            nid += 1
+            node = f"n{nid}"
+            rep.setdefault((kind, key), node)
+            label = os.path.basename(c.path) + ("  (interface)" if is_interface(c) else "")
+            url = vscode_link(diff_files[c.path])
+            fill = "#f6d365" if is_interface(c) else "#eef3fb"
+            L.append(f'    {node} [label="{label}", URL="{url}", fillcolor="{fill}"];')
+        L.append("  }")
+    # edges dependency -> dependent (foundation points up-tree to dependents)
+    for dependent, deps in reduced.items():
+        for d in deps:
+            if ("lib", d) in rep and ("lib", dependent) in rep:
+                L.append(f'  {rep[("lib", d)]} -> {rep[("lib", dependent)]} '
+                         f'[ltail="cluster_lib_{d}", lhead="cluster_lib_{dependent}"];')
+    # non-unit files (config, changelog) as loose roots
+    for c in by_unit.get(None, []):
+        nid += 1
+        L.append(f'  n{nid} [label="{os.path.basename(c.path)}", URL="{vscode_link(diff_files[c.path])}", '
+                 f'fillcolor="#f0f0f0"];')
     L.append("}")
     return "\n".join(L)
 
 
-def text_map(pack, radius, max_dependents=8):
-    """Plain indented tree, the fallback that renders in any markdown view."""
-    L = []
-    for lib, d in radius.items():
-        L.append(f"- **{lib}** (changed)")
-        deps = d["libraries"]
-        for dep in deps[:max_dependents]:
-            L.append(f"    - {dep}")
-        if len(deps) > max_dependents:
-            L.append(f"    - +{len(deps) - max_dependents} more")
-        if not deps:
-            L.append("    - (no library dependents)")
-    return "\n".join(L)
-
-
-def render_map(pack, radius):
-    """Write map.svg with graphviz if available; return the markdown to embed:
-    an image link when rendered, else an indented tree."""
+def render_map(pack, diff_files, link_root):
+    """Write map.svg (graphviz) whose nodes open each file's difft; return the
+    markdown to embed. Falls back to a note when graphviz is absent."""
     if shutil.which("dot"):
         svg = pack.out / "map.svg"
-        r = subprocess.run(["dot", "-Tsvg", "-o", str(svg)], input=dot(pack, radius),
+        r = subprocess.run(["dot", "-Tsvg", "-o", str(svg)], input=dot_forest(pack, diff_files, link_root),
                            capture_output=True, text=True)
         if r.returncode == 0 and svg.exists():
-            return f"![change map]({svg.name})\n\n(dependency -> dependent; changed libraries filled)"
-    return text_map(pack, radius) + "\n\n(install graphviz for a rendered map: brew install graphviz)"
+            return (f"![change map]({svg.name})\n\n(foundation at top, dependents below; yellow = interface. "
+                    f"Open [map.svg]({vscode_link(svg)}) directly to click a node through to its diff.)")
+    return "(install graphviz for a rendered map: brew install graphviz)"
 
 
 # --------------------------------------------------------------------------
@@ -277,10 +365,8 @@ def render_diff(repo, pack):
     return "\n".join(parts)
 
 
-def render_pack(repo, pack, link_root):
+def render_pack(repo, pack, link_root, diff_files):
     m = pack.meta
-    radius = blast_radius(pack)
-    order, others = reading_order(pack)
     fl = flags(pack)
     tests = test_candidates(pack)
     by_unit = {}
@@ -290,6 +376,9 @@ def render_pack(repo, pack, link_root):
 
     def link(c, line=None):
         return vscode_link(Path(link_root) / c.path, line)
+
+    def difflink(c):
+        return vscode_link(diff_files[c.path])
 
     L = [f"# PR #{pack.number}: {m['title']}", "",
          f"author {m['author']['login']} · {m['headRefName']} → {m['baseRefName']} · {m['state']} · "
@@ -313,31 +402,19 @@ def render_pack(repo, pack, link_root):
         L.append("")
     if fl:
         L += ["## Flags", ""] + [f"- {f}" for f in fl] + [""]
-    L += ["## Blast radius (direct dependents from the dune graph)", ""]
-    for lib, d in radius.items():
-        L.append(f"- **{lib}**: {len(d['libraries'])} libraries, {len(d['executables'])} executables, "
-                 f"{len(d['tests'])} test units")
-        if d["libraries"]:
-            L.append("  - libraries: " + ", ".join(d["libraries"][:20]) + (" …" if len(d["libraries"]) > 20 else ""))
-        if d["executables"]:
-            L.append("  - executables: " + ", ".join(d["executables"][:10]))
-    L += ["", "### Change map", "", render_map(pack, radius), ""]
-    L += ["## Reading order (dependencies before dependents)", ""]
-    n = 0
-    for lib in order:
-        for c in sorted(by_unit.get(f"lib:{lib}", []), key=lambda c: (not is_interface(c), c.path)):
-            n += 1
-            L.append(f"{n}. [{c.path}]({link(c)}) in **{lib}**" + (" (interface)" if is_interface(c) else ""))
-    for u in others:
-        for c in by_unit.get(f"exe:{u}", []) + by_unit.get(f"test:{u}", []):
-            n += 1
-            L.append(f"{n}. [{c.path}]({link(c)}) in {u}")
-    for c in by_unit.get("(not a dune unit)", []):
-        n += 1
-        L.append(f"{n}. [{c.path}]({link(c)})")
-    L += ["", "## Test candidates for the changed code", ""]
+    L += ["## Reading order", "",
+          "The changed files, sorted so a file comes after everything it depends on "
+          "(dependencies through unchanged code count too). Read top to bottom. "
+          "Each links to its own diff; the source link is in parentheses.", ""]
+    for rank, c, unit in order_files(pack):
+        where = f" — {unit}" if unit else ""
+        tag = " (interface)" if is_interface(c) else ""
+        L.append(f"{rank}. [{c.path}]({difflink(c)}){tag}{where}  ([source]({link(c)}))")
+    L += ["", "## Change map", "", render_map(pack, diff_files, link_root), ""]
+    L += ["## Test candidates for the changed code", ""]
     L += [f"- `{t['name']}` [{t['cost']}] — {t['reason']}" for t in tests] or ["- (none found)"]
-    L += ["", f"Diff: [diff.md]({vscode_link(pack.out / 'diff.md')}) · base and head copies under `{pack.out}`", ""]
+    L += ["", f"Full diff: [diff.md]({vscode_link(pack.out / 'diff.md')}) · per-file diffs under "
+          f"`{pack.out / 'diffs'}` · base and head copies under `{pack.out}`", ""]
     return "\n".join(L)
 
 
@@ -503,7 +580,8 @@ def build(repo, number, checked_out=False):
     materialize(repo, pack)
     annotate_units(pack)
     link_root = Path(repo) if checked_out else pack.out / "head"
-    (pack.out / "pack.md").write_text(render_pack(repo, pack, link_root))
+    diff_files = per_file_diffs(repo, pack)
+    (pack.out / "pack.md").write_text(render_pack(repo, pack, link_root, diff_files))
     (pack.out / "diff.md").write_text(render_diff(repo, pack))
     (pack.out / "meta.json").write_text(json.dumps(
         {"number": number, "merge_base": base, "head": head, "base_ref": meta["baseRefName"],

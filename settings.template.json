@@ -1,0 +1,71 @@
+{
+  "_comment": "Merged into .claude/settings.local.json by harness/install_settings.py. Docs relied on: code.claude.com/docs/en/hooks (Matcher field semantics, Hook stdin JSON input, Exit code semantics, JSON stdout output format) and code.claude.com/docs/en/permissions (Read and Edit: / anchors at the session cwd for local settings, single-segment deny patterns match at any depth, deny is evaluated before allow and is not bypassed by hooks).",
+  "permissions": {
+    "deny": [
+      "Edit(/flake.nix)",
+      "Edit(/flake.lock)",
+      "Edit(/opam.export)",
+      "Edit(/nix/**)",
+      "Edit(**/dune-project)",
+      "Edit(**/*.opam)",
+      "Edit(**/rust-toolchain*)",
+      "Edit(**/Cargo.toml)",
+      "Edit(**/Cargo.lock)",
+      "Edit(/_build/**)",
+      "Edit(/_opam/**)",
+      "Edit(/opam_switches/**)",
+      "Edit(/.envrc)",
+      "Edit(/src/lib/crypto/proof-systems/**)",
+      "Edit(/src/lib/crypto/kimchi_bindings/stubs/src/**)",
+      "Edit(/src/lib/crypto/kimchi_bindings/stubs/kimchi-stubs-vendors/**)",
+      "Bash(dune *)",
+      "Bash(opam *)",
+      "Bash(nix *)",
+      "Bash(nix-env *)",
+      "Bash(nix-shell *)",
+      "Bash(cargo *)",
+      "Bash(rustup *)",
+      "Bash(make *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/harness/hooks/post_edit_check.py",
+            "timeout": 600,
+            "statusMessage": "harness: type-checking edited file"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/harness/hooks/pre_bash_guard.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/harness/hooks/session_start.py",
+            "timeout": 120,
+            "statusMessage": "harness: deriving library graph"
+          }
+        ]
+      }
+    ]
+  }
+}

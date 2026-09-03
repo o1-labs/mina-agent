@@ -1,0 +1,485 @@
+#!/usr/bin/env python3
+"""mina-harness MCP server (stdio).
+
+Tools the agent uses instead of raw dune:
+    env_status, build, check, test, test_one, tests_for,
+    deps_of, dependents_of, library_of
+
+Rules:
+  * Every shell-out goes through env.Env.run(). No subprocess import here.
+  * One lock serializes dune calls (dune holds a workspace lock anyway).
+  * The library graph is derived at startup and re-derived whenever any dune
+    metadata file changes. derived.json on disk is a by-product for humans.
+  * Nothing here edits files.
+
+Run:   harness/.venv/bin/python harness/server.py
+Test:  harness/.venv/bin/python harness/server.py --selftest
+"""
+import json
+import os
+import re
+import sys
+import threading
+import time
+import tomllib
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import env as envmod      # noqa: E402
+import derive as derivemod  # noqa: E402
+
+MANIFEST = os.path.join(HERE, "manifest.toml")
+RAW_TAIL_BYTES = 4096
+DUNE_LOCK = threading.Lock()
+
+
+# --------------------------------------------------------------------------
+# environment + graph
+# --------------------------------------------------------------------------
+
+class Graph:
+    """derived.json, kept current against the dune metadata mtimes."""
+
+    def __init__(self, env):
+        self.env = env
+        self.data = None
+        self.stamp = None
+        self.error = None
+        self.refresh(force=True)
+
+    def _stamp(self):
+        st = []
+        for root, dirs, files in os.walk(os.path.join(self.env.repo, "src")):
+            dirs[:] = [d for d in dirs if d not in derivemod.SKIP_DIRS]
+            for f in files:
+                if f == "dune" or f == "dune-project" or f.endswith((".inc", ".opam")):
+                    p = os.path.join(root, f)
+                    try:
+                        st.append((p, os.stat(p).st_mtime_ns))
+                    except OSError:
+                        pass
+        return hash(tuple(sorted(st)))
+
+    def refresh(self, force=False):
+        s = self._stamp()
+        if not force and s == self.stamp:
+            return False
+        try:
+            self.data = derivemod.derive(self.env)
+            self.error = None
+            with open(derivemod.OUT, "w") as fh:
+                json.dump(self.data, fh, indent=1)
+        except BaseException as ex:  # SystemExit from derive.py included
+            self.error = f"derive failed: {ex}"
+        self.stamp = s
+        return True
+
+    def get(self):
+        self.refresh()
+        if self.error:
+            raise RuntimeError(self.error)
+        return self.data
+
+
+ENV = envmod.detect()
+GRAPH = Graph(ENV)
+with open(MANIFEST, "rb") as _fh:
+    MANIFEST_DATA = tomllib.load(_fh)
+
+
+# --------------------------------------------------------------------------
+# paths
+# --------------------------------------------------------------------------
+
+def rel(path):
+    """Normalize to a repo-relative path; refuse anything outside the repo."""
+    p = path if os.path.isabs(path) else os.path.join(ENV.repo, path)
+    p = os.path.normpath(p)
+    root = ENV.repo.rstrip(os.sep) + os.sep
+    if not (p + os.sep).startswith(root):
+        raise ValueError(f"{path} is outside the repo")
+    return os.path.relpath(p, ENV.repo)
+
+
+def enclosing_dune_dir(relpath):
+    """Nearest ancestor directory (inclusive) containing a dune file."""
+    d = relpath if os.path.isdir(os.path.join(ENV.repo, relpath)) else os.path.dirname(relpath)
+    while True:
+        if os.path.exists(os.path.join(ENV.repo, d, "dune")):
+            return d or "."
+        if d in ("", "."):
+            return None
+        d = os.path.dirname(d)
+
+
+def unit_of(relpath):
+    """(kind, key, record) of the unit whose dir encloses relpath, or None."""
+    g = GRAPH.get()
+    d = relpath if os.path.isdir(os.path.join(ENV.repo, relpath)) else os.path.dirname(relpath)
+    while True:
+        units = g["by_dir"].get(d)
+        if units:
+            # a dir with several (tests (names ...)): pick the one named after the file
+            base = os.path.splitext(os.path.basename(relpath))[0]
+            for u in units:
+                if u["kind"] in ("test", "exe") and u["name"] == base:
+                    table = {"test": "tests", "exe": "executables"}[u["kind"]]
+                    return u["kind"], u["key"], g[table][u["key"]]
+            # otherwise prefer a library; a dir with lib + tests is described by its lib
+            for kind in ("lib", "test", "exe"):
+                for u in units:
+                    if u["kind"] == kind:
+                        table = {"lib": "libraries", "test": "tests", "exe": "executables"}[kind]
+                        return kind, u["key"], g[table][u["key"]]
+        if d in ("", "."):
+            return None
+        d = os.path.dirname(d)
+
+
+# --------------------------------------------------------------------------
+# dune output parsing
+# --------------------------------------------------------------------------
+
+HEADER = re.compile(r'^File "([^"]+)", line (\d+), characters (\d+)-(\d+):')
+HEADER_NOCOL = re.compile(r'^File "([^"]+)", line (\d+)')
+SEVERITY = re.compile(r"^(Error(?: \([^)]*\))?|Warning(?: \d+)?(?: \[[^\]]*\])?):\s*(.*)")
+
+
+def parse_dune_errors(text):
+    """Turn dune/ocaml diagnostics into [{file,line,col_start,col_end,severity,message}]."""
+    out = []
+    cur = None
+    for line in text.splitlines():
+        m = HEADER.match(line) or HEADER_NOCOL.match(line)
+        if m:
+            if cur:
+                out.append(cur)
+            g = m.groups()
+            cur = {"file": g[0], "line": int(g[1]),
+                   "col_start": int(g[2]) if len(g) > 2 else None,
+                   "col_end": int(g[3]) if len(g) > 3 else None,
+                   "severity": None, "message": ""}
+            continue
+        if cur is None:
+            continue
+        s = SEVERITY.match(line)
+        if s:
+            cur["severity"] = "error" if s.group(1).startswith("Error") else "warning"
+            cur["message"] = s.group(2).strip()
+        elif cur["severity"] and line.strip():
+            cur["message"] += " " + line.strip()
+        elif cur["severity"] and not line.strip():
+            out.append(cur)
+            cur = None
+    if cur:
+        out.append(cur)
+    return [e for e in out if e["severity"]]
+
+
+INLINE_FAIL = re.compile(r'^File "([^"]+)", line (\d+), characters [\d-]+: (.*) (?:threw|is false)')
+INLINE_SUMMARY = re.compile(r"^\d+ tests? ran, \d+ test_modules? ran")
+ALCOTEST_FAIL = re.compile(r"^\s*\[FAIL\]\s+(.*)")
+ALCOTEST_SUMMARY = re.compile(r"^\d+ failures?!|^Test Successful in|^\d+ tests? run")
+
+
+def parse_test_output(text):
+    failures, summary = [], None
+    for line in text.splitlines():
+        m = INLINE_FAIL.match(line)
+        if m:
+            failures.append({"file": m.group(1), "line": int(m.group(2)), "name": m.group(3)})
+            continue
+        m = ALCOTEST_FAIL.match(line)
+        if m:
+            failures.append({"file": None, "line": None, "name": m.group(1).strip()})
+            continue
+        if INLINE_SUMMARY.match(line) or ALCOTEST_SUMMARY.match(line):
+            summary = line.strip()
+    return failures, summary
+
+
+def tail(text):
+    return text[-RAW_TAIL_BYTES:]
+
+
+# --------------------------------------------------------------------------
+# running dune
+# --------------------------------------------------------------------------
+
+def run_dune(argv, timeout_s):
+    """Run argv through the env adapter under the dune lock."""
+    if ENV.mode == "none":
+        raise RuntimeError("no usable toolchain: " + "; ".join(ENV.reasons))
+    t0 = time.time()
+    with DUNE_LOCK:
+        try:
+            r = ENV.run(argv, capture=True, timeout=timeout_s)
+            code, out = r.returncode, (r.stdout or "") + (r.stderr or "")
+            timed_out = False
+        except Exception as ex:  # subprocess.TimeoutExpired, without importing it
+            if type(ex).__name__ != "TimeoutExpired":
+                raise
+            code, timed_out = -1, True
+            out = ((ex.stdout or b"") if isinstance(ex.stdout, bytes) else (ex.stdout or ""))
+            if isinstance(out, bytes):
+                out = out.decode(errors="replace")
+    return code, out, round(time.time() - t0, 1), timed_out
+
+
+# --------------------------------------------------------------------------
+# manifest + tests
+# --------------------------------------------------------------------------
+
+def manifest_tests():
+    return {t["name"]: t for t in MANIFEST_DATA["tests"]}
+
+
+def inline_test_entry(lib):
+    g = GRAPH.get()
+    rec = g["libraries"].get(lib)
+    if not rec or not rec["has_inline_tests"]:
+        return None
+    tpl = MANIFEST_DATA["inline_tests"]
+    return {"name": tpl["name_prefix"] + lib,
+            "command": [a.replace("{dir}", rec["dir"]) for a in tpl["command_template"]],
+            "cost": tpl["cost"], "modes": tpl["modes"], "libraries": [lib]}
+
+
+def resolve_test(name):
+    t = manifest_tests().get(name)
+    if t:
+        return t
+    prefix = MANIFEST_DATA["inline_tests"]["name_prefix"]
+    if name.startswith(prefix):
+        t = inline_test_entry(name[len(prefix):])
+        if t:
+            return t
+        raise ValueError(f"{name[len(prefix):]} is not a library with (inline_tests)")
+    raise ValueError(f"unknown test {name!r}; see manifest.toml [[tests]] or use inline:<library>")
+
+
+# --------------------------------------------------------------------------
+# MCP server
+# --------------------------------------------------------------------------
+
+from mcp.server.mcpserver import MCPServer  # noqa: E402
+
+server = MCPServer(
+    "mina-harness",
+    instructions=("Build, type-check, and test tools for the Mina monorepo. "
+                  "Use these instead of running dune, opam, nix, or cargo directly."),
+)
+
+
+@server.tool()
+def env_status() -> dict:
+    """Detected toolchain mode (opam/nix/none), dune and OCaml versions, warnings."""
+    d = ENV.to_dict()
+    d["derived_graph"] = {"ok": GRAPH.error is None, "error": GRAPH.error}
+    return d
+
+
+@server.tool()
+def build(target: str, timeout_s: int = 600) -> dict:
+    """Run `dune build <target>`. target is a repo-relative path or alias like
+    src/lib/hex or @src/lib/hex/check or src/app/cli/src/mina.exe.
+    Returns structured OCaml errors parsed from dune output."""
+    t = target if target.startswith("@") else rel(target)
+    code, out, elapsed, timed_out = run_dune(["dune", "build", t], timeout_s)
+    return {"ok": code == 0, "target": t, "elapsed_s": elapsed, "timed_out": timed_out,
+            "errors": parse_dune_errors(out), "raw_tail": tail(out)}
+
+
+@server.tool()
+def check(path: str, timeout_s: int = 600) -> dict:
+    """Cheapest type-check of the library containing path: `dune build @<dir>/check`
+    (compiles interfaces/objects without linking). Returns structured errors."""
+    p = rel(path)
+    d = enclosing_dune_dir(p)
+    if d is None:
+        raise ValueError(f"{p} is not inside any dune directory")
+    alias = f"@{d}/check"
+    code, out, elapsed, timed_out = run_dune(["dune", "build", alias], timeout_s)
+    u = unit_of(p)
+    return {"ok": code == 0, "path": p, "alias": alias,
+            "library": u[1] if u and u[0] == "lib" else None,
+            "elapsed_s": elapsed, "timed_out": timed_out,
+            "errors": parse_dune_errors(out), "raw_tail": tail(out)}
+
+
+@server.tool()
+def test(name: str, timeout_s: int = 900) -> dict:
+    """Run a named test from manifest.toml, or inline:<library> for a library's
+    ppx_inline_test blocks. Refuses tests whose modes exclude the current mode."""
+    t = resolve_test(name)
+    if ENV.mode not in t["modes"]:
+        return {"ok": False, "name": name, "refused": True,
+                "reason": f"test {name} runs in modes {t['modes']}, current mode is {ENV.mode}",
+                "command": t["command"]}
+    argv = list(t["command"])
+    # dune caches passing runtest aliases; --force makes the test actually run
+    # (and print its summary) even when nothing changed.
+    if argv[:2] == ["dune", "build"] and "--force" not in argv:
+        argv.insert(2, "--force")
+    code, out, elapsed, timed_out = run_dune(argv, timeout_s)
+    failures, summary = parse_test_output(out)
+    return {"ok": code == 0, "name": name, "command": argv, "cost": t["cost"],
+            "elapsed_s": elapsed, "timed_out": timed_out, "summary_line": summary,
+            "failures": failures, "build_errors": parse_dune_errors(out), "raw_tail": tail(out)}
+
+
+@server.tool()
+def test_one(file: str, test_name: str = "", timeout_s: int = 900) -> dict:
+    """Run one ppx_inline_test block via scripts/testone.sh <file> [test_name].
+    test_name matches the string after `let%test "..."`; empty runs all blocks in the file."""
+    f = rel(file)
+    argv = ["bash", "scripts/testone.sh", f] + ([test_name] if test_name else [])
+    code, out, elapsed, timed_out = run_dune(argv, timeout_s)
+    failures, summary = parse_test_output(out)
+    return {"ok": code == 0, "file": f, "test_name": test_name or None, "command": argv,
+            "elapsed_s": elapsed, "timed_out": timed_out, "summary_line": summary,
+            "failures": failures, "build_errors": parse_dune_errors(out), "raw_tail": tail(out)}
+
+
+@server.tool()
+def tests_for(path: str) -> dict:
+    """Candidate tests for a source path, cheapest and most relevant first:
+    the file's own library (inline tests, manifest tests), then tests of
+    libraries that directly depend on it. Each has name/command/cost/reason."""
+    g = GRAPH.get()
+    p = rel(path)
+    u = unit_of(p)
+    if u is None:
+        raise ValueError(f"{p} is not inside any described dune unit")
+    kind, key, rec = u
+    out, seen = [], set()
+
+    def add(entry, reason):
+        if entry and entry["name"] not in seen:
+            seen.add(entry["name"])
+            out.append({**entry, "reason": reason,
+                        "runnable_in_current_mode": ENV.mode in entry["modes"]})
+
+    if kind != "lib":
+        add({"name": f"{kind}:{key}", "command": ["dune", "build", f"@{rec['dir']}/runtest"],
+             "cost": "unmeasured", "modes": ["opam", "nix"], "libraries": []},
+            f"path is inside {kind} unit {key}")
+        return {"path": p, "unit": {"kind": kind, "key": key}, "candidates": out}
+
+    lib = key
+    mt = manifest_tests()
+    core = MANIFEST_DATA["core"].get(lib)
+    if core:
+        add(mt.get(core["cheap_test"]), f"core library cheap_test for {lib}")
+    add(inline_test_entry(lib), "inline tests of the same library")
+    for t in sorted((t for t in mt.values() if lib in t["libraries"]),
+                    key=lambda t: {"fast": 0, "slow": 1}.get(t["cost"], 2)):
+        add(t, f"manifest test covering {lib}")
+    for dep in g["dependents"].get(lib, []):
+        if dep.startswith("test:"):
+            tkey = dep[5:]
+            trec = g["tests"][tkey]
+            add({"name": dep, "command": ["dune", "build", f"@{trec['dir']}/runtest"],
+                 "cost": "unmeasured", "modes": ["opam", "nix"], "libraries": [lib]},
+                f"test unit depending directly on {lib}")
+        elif not dep.startswith("exe:"):
+            add(inline_test_entry(dep), f"inline tests of dependent library {dep}")
+            for t in mt.values():
+                if dep in t["libraries"]:
+                    add(t, f"manifest test covering dependent {dep}")
+        if len(out) >= 20:
+            break
+    return {"path": p, "unit": {"kind": "lib", "key": lib, "dir": rec["dir"]},
+            "candidates": out[:20]}
+
+
+@server.tool()
+def deps_of(library: str) -> dict:
+    """Direct dependencies of a library (private dune name or public name)."""
+    g = GRAPH.get()
+    name = g["public_names"].get(library, library)
+    rec = g["libraries"].get(name)
+    if not rec:
+        raise ValueError(f"unknown library {library!r}")
+    return {"library": name, "public_name": rec["public_name"], "dir": rec["dir"],
+            "deps": rec["deps"], "external_deps": rec["external_deps"], "ppx": rec["ppx"],
+            "has_inline_tests": rec["has_inline_tests"]}
+
+
+@server.tool()
+def dependents_of(library: str) -> dict:
+    """Libraries, executables, and test units that directly depend on a library."""
+    g = GRAPH.get()
+    name = g["public_names"].get(library, library)
+    if name not in g["libraries"]:
+        raise ValueError(f"unknown library {library!r}")
+    deps = g["dependents"].get(name, [])
+    return {"library": name,
+            "libraries": [d for d in deps if ":" not in d],
+            "executables": [d[4:] for d in deps if d.startswith("exe:")],
+            "tests": [d[5:] for d in deps if d.startswith("test:")]}
+
+
+@server.tool()
+def library_of(path: str) -> dict:
+    """Which dune unit (library / executable / test) a source path belongs to."""
+    p = rel(path)
+    u = unit_of(p)
+    if u is None:
+        d = enclosing_dune_dir(p)
+        raise ValueError(f"{p}: no described unit; nearest dune dir is {d}")
+    kind, key, rec = u
+    return {"path": p, "kind": kind, "key": key, "dir": rec["dir"],
+            "name": rec.get("name", key), "public_name": rec.get("public_name")}
+
+
+# --------------------------------------------------------------------------
+# selftest
+# --------------------------------------------------------------------------
+
+SAMPLE_ERR = '''File "harness/scratch/scratch.ml", line 1, characters 14-26:
+1 | let x : int = "not an int"
+                  ^^^^^^^^^^^^
+Error: This expression has type string but an expression was expected of type
+         int
+File "src/lib/foo/bar.ml", line 7, characters 2-5:
+7 |   baz
+      ^^^
+Error (warning 32 [unused-value-declaration]): unused value baz.
+
+File "src/lib/foo/dune", line 3, characters 12-20:
+Error: Library "nope" not found.
+'''
+SAMPLE_TEST = '''File "src/lib/currency/currency.ml", line 1235, characters 6-61: fee sub_flagged (0.008 sec)
+File "src/lib/currency/currency.ml", line 1240, characters 6-40: broken threw (Failure "x").
+14 tests ran, 3 test_modules ran
+'''
+
+
+def selftest():
+    errs = parse_dune_errors(SAMPLE_ERR)
+    assert len(errs) == 3, errs
+    assert errs[0]["line"] == 1 and errs[0]["col_start"] == 14 and errs[0]["severity"] == "error"
+    assert "expected of type int" in errs[0]["message"], errs[0]
+    assert errs[1]["severity"] == "error" and "unused value baz" in errs[1]["message"]
+    assert errs[2]["file"].endswith("dune") and errs[2]["col_start"] == 12
+    f, s = parse_test_output(SAMPLE_TEST)
+    assert f == [{"file": "src/lib/currency/currency.ml", "line": 1240, "name": "broken"}], f
+    assert s == "14 tests ran, 3 test_modules ran"
+    assert rel(os.path.join(ENV.repo, "src/lib/hex")) == "src/lib/hex"
+    try:
+        rel("/etc/passwd"); assert False
+    except ValueError:
+        pass
+    g = GRAPH.get()
+    assert "pickles" in g["libraries"]
+    assert resolve_test("inline:currency")["command"] == ["dune", "build", "@src/lib/currency/runtest"]
+    print(f"selftest ok: mode={ENV.mode} libraries={len(g['libraries'])} "
+          f"tools={[t.name for t in server._tool_manager.list_tools()]}")
+
+
+if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        selftest()
+    else:
+        server.run(transport="stdio")

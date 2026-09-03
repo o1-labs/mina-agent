@@ -6,3 +6,5 @@ derived.json
 # headless run transcripts (harness/run.py)
 logs/
 __pycache__/
+.venv/
+scratch/_build/

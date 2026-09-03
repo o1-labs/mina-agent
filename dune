@@ -1,0 +1,4 @@
+; Keep dune from walking the harness's non-OCaml directories. harness/ sits
+; inside the dune workspace (root dune only excludes opam_switches), so
+; without this dune would scan .venv on every build.
+(data_only_dirs .venv vendor bin logs)

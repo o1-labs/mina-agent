@@ -13,6 +13,7 @@ import shutil
 import sys
 import threading
 import time
+import time
 import tomllib
 
 from . import env as envmod
@@ -31,11 +32,14 @@ DUNE_LOCK = threading.Lock()
 class Graph:
     """derived.json, kept current against the dune metadata mtimes."""
 
+    STALE_CHECK_INTERVAL = 2.0   # seconds; bound the whole-tree walk under call storms
+
     def __init__(self, env):
         self.env = env
         self.data = None
         self.stamp = None
         self.error = None
+        self._checked_at = 0.0
         self.refresh(force=True)
 
     def _stamp(self):
@@ -64,7 +68,13 @@ class Graph:
         return True
 
     def get(self):
-        self.refresh()
+        # Re-stamp (a full source-tree walk) at most once per interval, so a
+        # burst of graph queries in one command does not re-walk the tree per
+        # call. A mid-session edit is still picked up within the interval.
+        now = time.time()
+        if now - self._checked_at >= self.STALE_CHECK_INTERVAL:
+            self._checked_at = now
+            self.refresh()
         if self.error:
             raise RuntimeError(self.error)
         return self.data

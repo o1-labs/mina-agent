@@ -71,16 +71,17 @@ def review(pr: Optional[int] = typer.Option(None, "--pr", help="Pull request num
             typer.echo(f"review: {ex}", err=True)
             raise typer.Exit(1)
         libs = sorted({c.unit["key"] for c in pack.files if c.unit and c.unit["kind"] == "lib"})
-        typer.echo(f"PR #{pr}: {pack.meta['title']}\n  {len(pack.files)} file(s) in "
+        typer.echo(f"\nPR #{pr}: {pack.meta['title']}", err=True)
+        typer.echo(f"\n  ▶ review page (map + diffs, open in a browser):\n      {review_html}\n", err=True)
+        typer.echo(f"  pack: {pack_md}\n  {len(pack.files)} file(s), "
                    f"{len(libs)} librar{'y' if len(libs) == 1 else 'ies'}: {', '.join(libs) or '-'}\n"
-                   f"  pack {pack_md}\n  review page {review_html}\n"
-                   f"  PR code {'checked out' if live else 'not checked out (--checkout)'}", err=True)
+                   f"  PR code {'checked out' if live else 'not checked out (--checkout)'}\n", err=True)
         if open_:
             opener = "open" if sys.platform == "darwin" else ("xdg-open" if shutil.which("xdg-open") else None)
             if opener:
                 subprocess.run([opener, str(review_html)])   # semantic diffs + clickable map in the browser
             else:
-                typer.echo(f"--open: open {review_html} in a browser", err=True)
+                typer.echo(f"  open {review_html} in a browser", err=True)
         msg = R.first_message(pack, live)
         if dry_run:
             print(f"[dry-run] first message: {len(msg)} characters, begins:\n" + msg[:1200] + "\n...")

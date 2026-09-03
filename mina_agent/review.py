@@ -229,12 +229,17 @@ def topo_units(pack):
 
 def test_candidates(pack):
     from . import tools
-    seen, out = set(), []
+    # One tests_for per changed unit, not per file: files in the same library
+    # share candidates, and tests_for walks the dependents, which is the
+    # expensive part. One representative path per unit.
+    rep = {}
     for c in pack.files:
-        if not c.unit or c.status == "D":
-            continue
+        if c.unit and c.status != "D":
+            rep.setdefault((c.unit["kind"], c.unit["key"]), c.path)
+    seen, out = set(), []
+    for path in rep.values():
         try:
-            for cand in tools.tests_for(c.path)["candidates"][:3]:
+            for cand in tools.tests_for(path)["candidates"][:3]:
                 if cand["name"] not in seen:
                     seen.add(cand["name"])
                     out.append(cand)
@@ -632,13 +637,13 @@ When the reader asks you to record something (a comment for the author, a
 note), print the text for them to paste.
 
 Your first reply, in this order:
-1. One line giving the reader the files: "Pack: {pack_link} · diff: {diff_link}{map_clause} · open the Markdown preview (Cmd+Shift+V) to see the map." Use those exact links.
+1. One line, first thing, leading with the review page: "Open the review page: {html_link} (clickable change map + colored diffs). Also: {pack_link}." Use those exact links.
 2. What this PR changes, in one sentence.
 3. Why, in one sentence.
 4. Where to start reading, one link.
 5. A question offering the next step.
-Every identifier in lines 2 to 5 is a link too. Keep it to six lines after
-the files line. Then wait.
+Every identifier in lines 2 to 5 is a link too. Keep it to five lines after
+the review-page line. Then wait.
 """
 
 CHECKOUT_LIVE = ("The PR is checked out in the working tree, so LSP, type_at, definition and "
@@ -654,11 +659,10 @@ def first_message(pack, checked_out):
     if len(diff_md) > limit:
         diff_md = diff_md[:limit] + f"\n\n[diff truncated at {limit} characters; full diff in {pack.out / 'diff.md'}]\n"
     note = CHECKOUT_LIVE if checked_out else CHECKOUT_NOT.format(head_dir=pack.out / "head")
+    html_link = f"[review.html]({vscode_link(pack.out / 'review.html')})"
     pack_link = f"[pack.md]({vscode_link(pack.out / 'pack.md')})"
-    diff_link = f"[diff.md]({vscode_link(pack.out / 'diff.md')})"
-    map_clause = f" · map: [map.svg]({vscode_link(pack.out / 'map.svg')})" if (pack.out / "map.svg").exists() else ""
     rules = RULES.format(number=pack.number, checkout_note=note,
-                         pack_link=pack_link, diff_link=diff_link, map_clause=map_clause)
+                         html_link=html_link, pack_link=pack_link)
     return "\n".join([rules, "# Navigation pack", "", pack_md, "", "# Structural diff", "", diff_md])
 
 

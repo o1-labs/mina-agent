@@ -379,8 +379,13 @@ How to talk to the reader:
 - Small pieces. Never more than one function or one hunk per reply unless
   asked for more. When something is big, say "this has three parts" and
   give the first.
-- Every claim about code points at a line: file:line, using the vscode://
-  links from the pack so the reader can click.
+- Every identifier you mention is a link. A function, type, constructor,
+  module, record field, flag, or variant name never appears bare: the first
+  time it appears in a reply it is written as [name](vscode://file/...:line),
+  pointing at its definition, or at the changed line where it appears in
+  this PR. This includes the opening summary. If you cannot find where it
+  is defined, do not name it; describe it and say you could not locate it.
+- Every other claim about code points at a line the same way.
 - Name things the way the code names them. If a term needs a definition,
   give it in half a sentence, once.
 - If you do not know, say so and say what you would look at.
@@ -400,7 +405,7 @@ note), print the text for them to paste.
 
 Begin with at most six lines: what this PR changes in one sentence, why in
 one sentence, where to start reading (one link), and a question offering
-the next step. Then wait.
+the next step. Every identifier in those lines is a link too. Then wait.
 """
 
 CHECKOUT_LIVE = ("The PR is checked out in the working tree, so LSP, type_at, definition and "

@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
-"""Run one headless harness phase.
+"""Run one headless harness phase on the Claude Agent SDK.
 
     python3 harness/run.py --phase harness/phases/fix_build_error.md --arg target=src/lib/hex
         [--max-turns N] [--max-budget-usd X] [--model NAME] [--trace] [--dry-run]
     python3 harness/run.py --trace --from harness/logs/<file>.jsonl   # summarize a past run
 
+Re-executes itself under harness/.venv (claude-agent-sdk lives there), so
+plain python3 works.
+
 What it does, in order:
-  1. env.detect()/activate(): the activated environment is what `claude` is
-     spawned with, so the MCP server, hooks and merlin inherit the switch.
+  1. env.detect()/activate(): the activated environment is what the CLI
+     subprocess gets, so the MCP server, hooks and merlin inherit the switch.
   2. derive.py, so derived.json is current. Banner.
-  3. Render the phase prompt ({{arg}} placeholders) and the system-prompt
-     addition (tools.facts()).
-  4. claude -p with --append-system-prompt, --mcp-config (inline, this
-     server only, --strict-mcp-config), --allowedTools/--disallowedTools
-     from the phase, --permission-mode, --max-turns, --max-budget-usd,
-     --output-format stream-json --verbose --include-hook-events.
-     (CLI reference: System Prompt Customization, MCP Configuration,
-     Tool Access & Permissions, Permission Modes, Execution Limits & Budget,
-     Output Control & Streaming.)
-  5. Stream events to harness/logs/<UTC>-<phase>.jsonl; one progress line
-     per tool call on the terminal.
-  6. Print the final assistant text and a stats line. With --trace, also
-     the trajectory evidence (tool inventory, ordered calls, hook firings,
-     denials, tests_for vs test) and write it beside the log as .summary.md.
+  3. Render the phase prompt ({{arg}} placeholders) and build ClaudeAgentOptions:
+       system_prompt   claude_code preset + tools.facts() appended
+       mcp_servers     this server only (strict_mcp_config)
+       allowed_tools / disallowed_tools / permission_mode / max_turns /
+       max_budget_usd  from the phase file
+       disallowed_tools also carries the deny rules from settings.template.json,
+                       so the walls hold with setting_sources=["project"]
+       hooks           in-process: PostToolUse Edit|Write -> tools.check;
+                       PreToolUse Bash -> hooks/pre_bash_guard.offending
+       setting_sources ["project"] (CLAUDE.md, no local hooks: one hook path)
+  4. Stream typed messages, serialize each to harness/logs/<UTC>-<phase>.jsonl,
+     print one progress line per tool call.
+  5. Print the final assistant text and a stats line. --trace adds the
+     trajectory evidence (tool inventory, ordered calls, hook firings, denials,
+     tests_for vs test) and writes it beside the log as .summary.md.
 """
 import argparse
+import asyncio
+import dataclasses
 import datetime as dt
 import json
 import os
@@ -33,12 +39,18 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+VENV = os.path.join(HERE, ".venv")
+VENV_PY = os.path.join(VENV, "bin", "python")
+if os.path.exists(VENV_PY) and os.path.realpath(sys.prefix) != os.path.realpath(VENV):
+    os.execv(VENV_PY, [VENV_PY] + sys.argv)
+
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, "hooks"))
 import env as envmod  # noqa: E402
 
 LOGS = os.path.join(HERE, "logs")
 SERVER = os.path.join(HERE, "server.py")
-VENV_PY = os.path.join(HERE, ".venv", "bin", "python")
+TEMPLATE = os.path.join(HERE, "settings.template.json")
 
 
 # --------------------------------------------------------------------------
@@ -57,7 +69,6 @@ def load_phase(path):
             continue
         k, _, v = line.partition(":")
         meta[k.strip()] = v.strip()
-    body = m.group(2).strip()
     lst = lambda k: [x.strip() for x in meta.get(k, "").split(",") if x.strip()]
     return {
         "name": meta.get("name") or os.path.splitext(os.path.basename(path))[0],
@@ -67,7 +78,7 @@ def load_phase(path):
         "max_turns": int(meta.get("max_turns", 30)),
         "max_budget_usd": float(meta.get("max_budget_usd", 5)),
         "args": lst("args"),
-        "body": body,
+        "body": m.group(2).strip(),
     }
 
 
@@ -87,25 +98,117 @@ def render(phase, args):
 
 
 # --------------------------------------------------------------------------
-# invocation
+# in-process hooks (same logic as harness/hooks/*.py, no subprocess)
 # --------------------------------------------------------------------------
 
-def claude_argv(phase, prompt, system_add, opts):
-    mcp = {"mcpServers": {"mina-harness": {"type": "stdio", "command": VENV_PY, "args": [SERVER]}}}
-    argv = ["claude", "-p", prompt,
-            "--append-system-prompt", system_add,
-            "--mcp-config", json.dumps(mcp), "--strict-mcp-config",
-            "--permission-mode", phase["permission_mode"],
-            "--max-turns", str(opts.max_turns or phase["max_turns"]),
-            "--max-budget-usd", str(opts.max_budget_usd or phase["max_budget_usd"]),
-            "--output-format", "stream-json", "--verbose", "--include-hook-events"]
-    if phase["allowed_tools"]:
-        argv += ["--allowedTools"] + phase["allowed_tools"]
-    if phase["disallowed_tools"]:
-        argv += ["--disallowedTools"] + phase["disallowed_tools"]
-    if opts.model:
-        argv += ["--model", opts.model]
-    return argv
+async def post_edit_check(inp, tool_use_id, ctx):
+    path = (inp.get("tool_input") or {}).get("file_path") or ""
+    if not path.endswith((".ml", ".mli")):
+        return record_hook("PostToolUse", inp.get("tool_name"), inp.get("tool_input"), {})
+    import tools
+    try:
+        r = tools.check(path)
+    except Exception as ex:
+        return record_hook("PostToolUse", inp.get("tool_name"), inp.get("tool_input"),
+                           {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                                   "additionalContext": f"harness check skipped for {path}: {ex}"}})
+    ctx_json = {"harness_check": {"path": r["path"], "alias": r["alias"], "ok": r["ok"],
+                                  "elapsed_s": r["elapsed_s"], "errors": r["errors"],
+                                  "warnings": r["warnings"][:10]}}
+    if not r["ok"] and not r["errors"]:
+        ctx_json["harness_check"]["raw_tail"] = r["raw_tail"]
+    return record_hook("PostToolUse", inp.get("tool_name"), inp.get("tool_input"),
+                       {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                               "additionalContext": json.dumps(ctx_json)}})
+
+
+async def pre_bash_guard(inp, tool_use_id, ctx):
+    import pre_bash_guard as guard
+    hit = guard.offending((inp.get("tool_input") or {}).get("command") or "")
+    if not hit:
+        return record_hook("PreToolUse", "Bash", inp.get("tool_input"), {})
+    sub, word, why = hit
+    return record_hook("PreToolUse", "Bash", inp.get("tool_input"),
+                       {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                               "permissionDecisionReason":
+                                                   f"blocked `{sub}`: `{word}` is not allowed here; {why}"}})
+
+
+# --------------------------------------------------------------------------
+# options
+# --------------------------------------------------------------------------
+
+def build_options(phase, system_add, aenv, repo, opts):
+    from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
+    with open(TEMPLATE) as fh:
+        deny = json.load(fh)["permissions"]["deny"]
+    disallowed = list(dict.fromkeys(phase["disallowed_tools"] + deny))
+    return ClaudeAgentOptions(
+        system_prompt={"type": "preset", "preset": "claude_code", "append": system_add},
+        mcp_servers={"mina-harness": {"type": "stdio", "command": VENV_PY, "args": [SERVER]}},
+        strict_mcp_config=True,
+        allowed_tools=phase["allowed_tools"],
+        disallowed_tools=disallowed,
+        permission_mode=phase["permission_mode"],
+        max_turns=opts.max_turns or phase["max_turns"],
+        max_budget_usd=opts.max_budget_usd or phase["max_budget_usd"],
+        model=opts.model,
+        cwd=repo,
+        env=aenv,
+        setting_sources=["project"],
+        include_hook_events=True,
+        hooks={"PostToolUse": [HookMatcher(matcher="Edit|Write", hooks=[post_edit_check], timeout=600)],
+               "PreToolUse": [HookMatcher(matcher="Bash", hooks=[pre_bash_guard], timeout=10)]},
+        stderr=lambda line: STDERR.append(line),
+    )
+
+
+STDERR = []
+LOG = {"fh": None}
+
+
+def record_hook(event, tool, inp, output):
+    """Write a HarnessHook line into the run log from inside a callback, so the
+    trace has first-hand evidence of every in-process hook firing."""
+    rec = {"kind": "HarnessHook", "event": event, "tool": tool,
+           "input": {k: v for k, v in (inp or {}).items() if k in ("file_path", "command")},
+           "output": output}
+    if LOG["fh"]:
+        LOG["fh"].write(json.dumps(rec, default=str) + "\n")
+        LOG["fh"].flush()
+    if LOG.get("traj"):
+        LOG["traj"].feed(json.loads(json.dumps(rec, default=str)))
+    return output
+
+
+def options_summary(o):
+    d = {k: getattr(o, k) for k in ("allowed_tools", "disallowed_tools", "permission_mode",
+                                    "max_turns", "max_budget_usd", "model", "cwd",
+                                    "setting_sources", "strict_mcp_config")}
+    d["mcp_servers"] = list(o.mcp_servers)
+    d["hooks"] = {k: [m.matcher for m in v] for k, v in (o.hooks or {}).items()}
+    d["system_prompt_append_chars"] = len(o.system_prompt.get("append", ""))
+    d["env_overrides"] = sorted(k for k, v in o.env.items() if os.environ.get(k) != v)
+    return d
+
+
+# --------------------------------------------------------------------------
+# messages -> log lines -> trajectory
+# --------------------------------------------------------------------------
+
+def to_record(msg):
+    """Serialize an SDK message to a plain dict (the .jsonl line format)."""
+    d = {"kind": type(msg).__name__}
+    if dataclasses.is_dataclass(msg):
+        for f in dataclasses.fields(msg):
+            v = getattr(msg, f.name)
+            if f.name == "content" and isinstance(v, list):
+                v = [{"block": type(b).__name__, **(dataclasses.asdict(b) if dataclasses.is_dataclass(b) else {"value": b})}
+                     for b in v]
+            d[f.name] = v
+    else:
+        d["value"] = str(msg)
+    return json.loads(json.dumps(d, default=str))
 
 
 def short(v, n=70):
@@ -118,44 +221,38 @@ def tool_label(name):
     return name.replace("mcp__mina-harness__", "harness.")
 
 
-# --------------------------------------------------------------------------
-# event stream analysis (works live and on a saved .jsonl)
-# --------------------------------------------------------------------------
-
 class Trajectory:
     def __init__(self):
         self.tools_available = None
-        self.calls = []        # {id, name, input, result, is_error}
-        self.by_id = {}
-        self.hooks = []        # {event, name, output}
-        self.denials = []
+        self.calls, self.by_id, self.hooks = [], {}, []
         self.result = None
-        self.session_id = None
 
-    def feed(self, ev):
-        t = ev.get("type")
-        if t == "system" and ev.get("subtype") == "init":
-            self.tools_available = ev.get("tools") or []
-            self.session_id = ev.get("session_id")
-        elif t == "assistant":
-            for block in (ev.get("message") or {}).get("content") or []:
-                if block.get("type") == "tool_use":
-                    c = {"id": block.get("id"), "name": block.get("name"),
-                         "input": block.get("input") or {}, "result": None, "is_error": False}
+    def feed(self, rec):
+        k = rec.get("kind")
+        if k == "SystemMessage":
+            sub, data = rec.get("subtype"), rec.get("data") or {}
+            if sub == "init":
+                self.tools_available = data.get("tools") or []
+            elif sub in ("hook_started", "hook_response", "hook_progress"):
+                self.hooks.append({"event": sub, "name": data.get("hook_name"), "data": data})
+        elif k == "AssistantMessage":
+            for b in rec.get("content") or []:
+                if b.get("block") == "ToolUseBlock":
+                    c = {"id": b["id"], "name": b["name"], "input": b.get("input") or {},
+                         "result": None, "is_error": False}
                     self.calls.append(c)
                     self.by_id[c["id"]] = c
-        elif t == "user":
-            for block in (ev.get("message") or {}).get("content") or []:
-                if block.get("type") == "tool_result" and block.get("tool_use_id") in self.by_id:
-                    c = self.by_id[block["tool_use_id"]]
-                    c["result"] = block.get("content")
-                    c["is_error"] = bool(block.get("is_error"))
-        elif t == "system" and ev.get("subtype") in ("hook_started", "hook_response", "hook_progress"):
-            self.hooks.append({"event": ev["subtype"], "name": ev.get("hook_name"), "raw": ev})
-        elif t == "result":
-            self.result = ev
-            self.session_id = ev.get("session_id") or self.session_id
-            self.denials = ev.get("permission_denials") or []
+        elif k == "UserMessage":
+            for b in rec.get("content") or []:
+                if b.get("block") == "ToolResultBlock" and b.get("tool_use_id") in self.by_id:
+                    c = self.by_id[b["tool_use_id"]]
+                    c["result"] = b.get("content")
+                    c["is_error"] = bool(b.get("is_error"))
+        elif k == "HarnessHook":
+            self.hooks.append({"event": "hook_response", "name": f"{rec['event']}:{rec['tool']}",
+                               "data": {"output": rec.get("output"), "input": rec.get("input")}})
+        elif k == "ResultMessage":
+            self.result = rec
 
     # ---- rendering ----------------------------------------------------
 
@@ -167,8 +264,7 @@ class Trajectory:
             try:
                 j = json.loads(r)
                 if isinstance(j, dict):
-                    keys = [k for k in ("ok", "refused", "elapsed_s", "summary_line") if k in j]
-                    bits = [f"{k}={j[k]}" for k in keys]
+                    bits = [f"{k}={j[k]}" for k in ("ok", "refused", "elapsed_s", "summary_line") if k in j]
                     if "errors" in j:
                         bits.append(f"errors={len(j['errors'])}")
                     if "candidates" in j:
@@ -185,15 +281,32 @@ class Trajectory:
 
     def progress_line(self, c):
         inp = c["input"]
-        arg = inp.get("target") or inp.get("path") or inp.get("name") or inp.get("library") \
-            or inp.get("file_path") or inp.get("file") or inp.get("pattern") or ""
+        arg = (inp.get("target") or inp.get("path") or inp.get("name") or inp.get("library")
+               or inp.get("file_path") or inp.get("file") or inp.get("pattern") or "")
         return f"  {tool_label(c['name'])} {short(str(arg), 60)}"
 
     def stats_line(self):
         r = self.result or {}
         return (f"turns={r.get('num_turns')} cost_usd={round(r.get('total_cost_usd') or 0, 3)} "
                 f"duration_s={round((r.get('duration_ms') or 0) / 1000)} "
-                f"stop={r.get('subtype')} session={self.session_id}")
+                f"stop={r.get('subtype')} session={r.get('session_id')}")
+
+    def hook_detail(self, h):
+        out = h["data"].get("output") or ""
+        try:
+            j = json.loads(out) if isinstance(out, str) else out
+            ctx = (j.get("hookSpecificOutput") or {}).get("additionalContext") or ""
+            hc = (json.loads(ctx).get("harness_check") or {}) if ctx.startswith("{") else {}
+            if hc:
+                s = f"check {hc.get('alias')} ok={hc.get('ok')} errors={len(hc.get('errors', []))}"
+                if hc.get("errors"):
+                    e0 = hc["errors"][0]
+                    s += f" first={e0['file']}:{e0['line']} {short(e0['message'], 60)}"
+                return s
+            reason = (j.get("hookSpecificOutput") or {}).get("permissionDecisionReason")
+            return short(reason or ctx or "", 100)
+        except (ValueError, AttributeError):
+            return short(str(out), 100)
 
     def summary_md(self, phase_name, log_path):
         L = [f"# {phase_name} trajectory", "", f"log: `{log_path}`", "",
@@ -201,50 +314,26 @@ class Trajectory:
         if self.tools_available is None:
             L.append("(no init event found)")
         else:
-            has_bash = "Bash" in self.tools_available
             harness = sorted(t for t in self.tools_available if t.startswith("mcp__mina-harness__"))
             other = sorted(t for t in self.tools_available if not t.startswith("mcp__"))
-            L.append(f"- Bash present: **{has_bash}**")
+            L.append(f"- Bash present: **{'Bash' in self.tools_available}**")
             L.append(f"- harness tools ({len(harness)}): " + ", ".join(tool_label(t) for t in harness))
-            L.append(f"- built-in tools: " + ", ".join(other))
+            L.append("- built-in tools: " + ", ".join(other))
         L += ["", "## Ordered tool calls", "", "| # | tool | input | result |", "|---|---|---|---|"]
         for i, c in enumerate(self.calls, 1):
             L.append(f"| {i} | {tool_label(c['name'])} | {short(c['input'], 60)} | "
                      f"{'ERROR ' if c['is_error'] else ''}{short(self.result_text(c), 90)} |")
         L += ["", "## Hook firings", ""]
-        fired = [h for h in self.hooks if h["event"] == "hook_response"]
-        if not fired and not self.hooks:
-            L.append("(none recorded)")
-        for h in self.hooks:
-            raw = h["raw"]
-            out = raw.get("output") or ""
-            detail = ""
-            if h["event"] == "hook_response":
-                try:
-                    j = json.loads(out)
-                    ctx = (j.get("hookSpecificOutput") or {}).get("additionalContext") or ""
-                    try:
-                        cj = json.loads(ctx)
-                        hc = cj.get("harness_check") or {}
-                        detail = (f"check {hc.get('alias')} ok={hc.get('ok')} "
-                                  f"errors={len(hc.get('errors', []))}")
-                        if hc.get("errors"):
-                            e0 = hc["errors"][0]
-                            detail += f" first={e0['file']}:{e0['line']} {short(e0['message'], 60)}"
-                    except ValueError:
-                        detail = short(ctx, 100) or short(j.get("systemMessage") or "", 60)
-                except ValueError:
-                    detail = short(out, 100)
-            L.append(f"- {h['event']}: {h['name']} {detail}")
+        L += [f"- {h['name']} {short(h['data'].get('input') or '', 60)} -> "
+              f"{self.hook_detail(h) or 'no action'}" for h in self.hooks] or ["(none recorded)"]
         L += ["", "## Permission denials", ""]
-        L += [f"- {d.get('tool_name')} {short(d.get('tool_input'), 100)}" for d in self.denials] or ["(none)"]
+        den = (self.result or {}).get("permission_denials") or []
+        L += [f"- {d.get('tool_name')} {short(d.get('tool_input'), 100)}" for d in den] or ["(none)"]
         L += ["", "## tests_for vs test", ""]
         tf = [c for c in self.calls if c["name"].endswith("tests_for")]
         te = [c for c in self.calls if c["name"].endswith("__test")]
-        for c in tf:
-            L.append(f"- tests_for({short(c['input'], 50)}) -> {self.result_text(c)}")
-        for c in te:
-            L.append(f"- test({c['input'].get('name')}) -> {self.result_text(c)}")
+        L += [f"- tests_for({short(c['input'], 50)}) -> {self.result_text(c)}" for c in tf]
+        L += [f"- test({c['input'].get('name')}) -> {self.result_text(c)}" for c in te]
         if not tf and not te:
             L.append("(no test calls)")
         L += ["", "## Stats", "", self.stats_line(), ""]
@@ -254,6 +343,21 @@ class Trajectory:
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
+
+async def run_query(prompt, options, log_path, traj):
+    from claude_agent_sdk import query
+    seen = 0
+    with open(log_path, "w", encoding="utf-8") as log:
+        LOG["fh"], LOG["traj"] = log, traj
+        async for msg in query(prompt=prompt, options=options):
+            rec = to_record(msg)
+            log.write(json.dumps(rec) + "\n")
+            log.flush()
+            traj.feed(rec)
+            for c in traj.calls[seen:]:
+                print(traj.progress_line(c), flush=True)
+            seen = len(traj.calls)
+
 
 def run_phase(opts):
     e = envmod.detect()
@@ -271,12 +375,10 @@ def run_phase(opts):
     prompt = render(phase, args)
     import tools
     system_add = "\n".join(tools.facts())
-    argv = claude_argv(phase, prompt, system_add, opts)
+    options = build_options(phase, system_add, aenv, e.repo, opts)
 
     if opts.dry_run:
-        print("\n[dry-run] argv:")
-        for a in argv:
-            print("   ", short(a, 160))
+        print("\n[dry-run] options:\n" + json.dumps(options_summary(options), indent=1, default=str))
         print("\n[dry-run] prompt:\n" + prompt)
         print("\n[dry-run] system prompt addition:\n" + system_add)
         return 0
@@ -285,28 +387,11 @@ def run_phase(opts):
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = os.path.join(LOGS, f"{stamp}-{phase['name']}.jsonl")
     print(f"\nphase {phase['name']}  args {args}  log {os.path.relpath(log_path, e.repo)}\n")
-
     traj = Trajectory()
-    with open(log_path, "w", encoding="utf-8") as log:
-        proc = subprocess.Popen(argv, env=aenv, cwd=e.repo, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True)
-        seen = 0
-        for line in proc.stdout:
-            log.write(line)
-            log.flush()
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue
-            traj.feed(ev)
-            for c in traj.calls[seen:]:
-                print(traj.progress_line(c), flush=True)
-            seen = len(traj.calls)
-        proc.wait()
-        err = proc.stderr.read()
-    if err.strip():
-        sys.stderr.write(err[-2000:])
-    return finish(traj, phase["name"], log_path, opts.trace, proc.returncode)
+    asyncio.run(run_query(prompt, options, log_path, traj))
+    if STDERR:
+        sys.stderr.write("\n".join(STDERR[-20:]) + "\n")
+    return finish(traj, phase["name"], log_path, opts.trace)
 
 
 def summarize_from(opts):
@@ -318,13 +403,16 @@ def summarize_from(opts):
             except ValueError:
                 continue
     name = re.sub(r"^\d{8}T\d{6}Z-", "", os.path.splitext(os.path.basename(opts.from_log))[0])
-    return finish(traj, name, opts.from_log, True, 0)
+    return finish(traj, name, opts.from_log, True)
 
 
-def finish(traj, phase_name, log_path, trace, rc):
+def finish(traj, phase_name, log_path, trace):
     r = traj.result or {}
     print("\n=== result ===")
     print((r.get("result") or "(no final assistant text)").strip())
+    if not traj.result or traj.tools_available is None:
+        print("\nWARNING: init or result message missing from the stream; the run did not "
+              "complete normally or the SDK message shapes changed.")
     print("\n" + traj.stats_line())
     if trace:
         md = traj.summary_md(phase_name, log_path)
@@ -333,7 +421,7 @@ def finish(traj, phase_name, log_path, trace, rc):
             fh.write(md)
         print("\n=== trace ===\n" + md)
         print(f"summary written to {out}")
-    return 0 if (rc == 0 and r.get("subtype") == "success") else 1
+    return 0 if r.get("subtype") == "success" and not r.get("is_error") else 1
 
 
 def main(argv):
@@ -344,7 +432,7 @@ def main(argv):
     ap.add_argument("--max-budget-usd", type=float)
     ap.add_argument("--model")
     ap.add_argument("--trace", action="store_true", help="print and save the trajectory evidence")
-    ap.add_argument("--dry-run", action="store_true", help="print argv and prompts, run nothing")
+    ap.add_argument("--dry-run", action="store_true", help="print options and prompts, run nothing")
     ap.add_argument("--from", dest="from_log", help="summarize an existing .jsonl instead of running")
     opts = ap.parse_args(argv)
     if opts.from_log:

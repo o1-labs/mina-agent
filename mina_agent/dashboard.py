@@ -1,77 +1,123 @@
-"""Browser dashboard for harness runs and the lint gate.
+"""Browser log stream for harness runs and the lint gate.
 
 A stdlib HTTP server (no Node, no extra dependency) that reads what the CLI
-already writes under harness/state/logs:
-  * <UTC>-<phase>.jsonl   headless run logs, interpreted with trajectory.py
-  * lint.jsonl            every lint / pre-commit decision
-and pushes a Server-Sent Event whenever any of them changes, so the page
-refreshes live while a run is in progress. Runs from other terminals or from
-yesterday show the same way, since only the files are read.
+already writes under harness/state/logs and serves one flat, newest-first
+stream of events, each with a one-line summary and the full record behind a
+disclosure. A Server-Sent Event fires whenever any log changes.
 
-Routes:  /            the page (data/dashboard.html)
-         /api/runs    run list with stats
-         /api/run/ID  one run's trajectory
-         /api/lint    lint history
-         /events      SSE: {"type": "change"} on any log change
+Sources:  <UTC>-<phase>.jsonl   run logs, interpreted with trajectory.py
+          lint.jsonl            every lint / pre-commit decision
+
+Routes:   /              the page (data/dashboard.html)
+          /api/events    [{id, ts, source, kind, level, summary, detail}] newest first
+          /events        SSE: {"type": "change"} on any log change
 """
 import json
-import os
 import re
-import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote
 
 from . import paths, trajectory
 
 PAGE = paths.DATA / "dashboard.html"
 
 
-def _runs(repo):
+def _iso(stamp):
+    """20260903T205605Z -> 2026-09-03T20:56:05+00:00"""
+    m = re.match(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$", stamp or "")
+    return f"{m[1]}-{m[2]}-{m[3]}T{m[4]}:{m[5]}:{m[6]}+00:00" if m else ""
+
+
+def _short(v, n=110):
+    return trajectory.short(v, n)
+
+
+def _run_events(path):
+    """Events for one run log, in file order, each carrying a synthetic
+    timestamp (run start + line index) so runs interleave sensibly with lint."""
+    m = re.match(r"^(\d{8}T\d{6}Z)-(.+)\.jsonl$", path.name)
+    start, phase = (m.group(1), m.group(2)) if m else ("", path.stem)
+    base = _iso(start)
+    traj = trajectory.Trajectory()
+    events = []
+    with open(path, encoding="utf-8") as fh:
+        for i, line in enumerate(fh):
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            before = len(traj.calls)
+            traj.feed(rec)
+            ts = f"{base}#{i:05d}"
+            k = rec.get("kind")
+            ev = dict(id=f"{path.stem}:{i}", ts=ts, source=path.stem, phase=phase, detail=rec)
+            if k == "SystemMessage" and rec.get("subtype") == "init":
+                tools = rec.get("data", {}).get("tools") or []
+                bash = "Bash" in tools
+                events.append({**ev, "kind": "run.start", "level": "bad" if bash else "ok",
+                               "summary": f"run started · {phase} · {len([t for t in tools if t.startswith('mcp__mina-harness__')])} harness tools · "
+                                          f"bash {'PRESENT' if bash else 'absent'}"})
+            elif k == "AssistantMessage":
+                for b in rec.get("content") or []:
+                    if b.get("block") == "ToolUseBlock":
+                        c = traj.by_id.get(b["id"])
+                        events.append({**ev, "id": f"{ev['id']}:{b['id']}", "kind": "tool.call", "level": "info",
+                                       "summary": "→ " + (traj.progress_line(c).strip() if c else b["name"])})
+                    elif b.get("block") == "TextBlock" and b.get("text", "").strip():
+                        events.append({**ev, "id": f"{ev['id']}:text", "kind": "assistant", "level": "dim",
+                                       "summary": "assistant: " + _short(b["text"].strip().replace("\n", " "), 140)})
+            elif k == "UserMessage":
+                for b in rec.get("content") or []:
+                    if b.get("block") == "ToolResultBlock" and b.get("tool_use_id") in traj.by_id:
+                        c = traj.by_id[b["tool_use_id"]]
+                        events.append({**ev, "id": f"{ev['id']}:{b['tool_use_id']}", "kind": "tool.result",
+                                       "level": "bad" if c["is_error"] else "ok",
+                                       "summary": f"← {trajectory.tool_label(c['name'])} " + _short(traj.result_text(c), 120)})
+            elif k == "HarnessHook":
+                h = traj.hooks[-1] if traj.hooks else {"name": "?", "output": rec.get("output")}
+                out = rec.get("output") or {}
+                denied = (out.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny"
+                events.append({**ev, "kind": "hook", "level": "bad" if denied else "ok",
+                               "summary": f"hook {h['name']} → {traj.hook_detail(h)}"})
+            elif k == "ResultMessage":
+                ok = rec.get("subtype") == "success" and not rec.get("is_error")
+                events.append({**ev, "kind": "run.end", "level": "ok" if ok else "bad",
+                               "summary": f"run finished · {rec.get('subtype')} · {rec.get('num_turns')} turns · "
+                                          f"${round(rec.get('total_cost_usd') or 0, 3)} · {round((rec.get('duration_ms') or 0) / 1000)}s"
+                                          + (f" · {len(rec.get('permission_denials') or [])} denial(s)" if rec.get("permission_denials") else "")})
+    return events
+
+
+def _lint_events(path):
+    events = []
+    if not path.exists():
+        return events
+    with open(path, encoding="utf-8") as fh:
+        for i, line in enumerate(fh):
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            fails = [r["name"] for r in rec["results"] if r["status"] == "fail"]
+            fixed = any(r["status"] == "note" and r["name"] == "ocamlformat" for r in rec["results"])
+            files = rec["files"] if isinstance(rec["files"], list) else None
+            nfiles = len(files) if files is not None else rec["files"]
+            verdict = f"BLOCKED {','.join(fails)}" if rec["blocked"] else ("fixed" if fixed else "passed")
+            events.append(dict(id=f"lint:{i}", ts=rec["ts"] + "#99999", source="lint", phase="lint",
+                               kind="lint", level="bad" if rec["blocked"] else ("info" if fixed else "ok"),
+                               summary=f"lint {rec['caller']} ({rec['scope']}) {verdict} · {nfiles} file(s)"
+                                       + (" · " + ", ".join(f.split("/")[-1] for f in files[:4]) if files else ""),
+                               detail=rec))
+    return events
+
+
+def events(repo, limit=500):
     d = paths.logs_dir(repo)
     out = []
-    for p in sorted(d.glob("*.jsonl"), reverse=True):
-        if p.name == "lint.jsonl":
-            continue
-        m = re.match(r"^(\d{8}T\d{6}Z)-(.+)\.jsonl$", p.name)
-        traj = trajectory.load(p)
-        r = traj.result or {}
-        out.append({"id": p.stem, "phase": m.group(2) if m else p.stem, "started": m.group(1) if m else "",
-                    "calls": len(traj.calls), "turns": r.get("num_turns"),
-                    "cost_usd": round(r.get("total_cost_usd") or 0, 3),
-                    "duration_s": round((r.get("duration_ms") or 0) / 1000),
-                    "status": r.get("subtype") or "running",
-                    "bash_present": (traj.tools_available is not None and "Bash" in traj.tools_available)})
-    return out
-
-
-def _run(repo, run_id):
-    p = paths.logs_dir(repo) / f"{run_id}.jsonl"
-    if not p.exists() or "/" in run_id:
-        return None
-    traj = trajectory.load(p)
-    r = traj.result or {}
-    harness = sorted(t for t in (traj.tools_available or []) if t.startswith("mcp__mina-harness__"))
-    builtin = sorted(t for t in (traj.tools_available or []) if not t.startswith("mcp__"))
-    return {
-        "id": run_id,
-        "inventory": None if traj.tools_available is None else {
-            "bash_present": "Bash" in traj.tools_available,
-            "harness": [trajectory.tool_label(t) for t in harness], "builtin": builtin},
-        "calls": [{"n": i, "tool": trajectory.tool_label(c["name"]), "input": c["input"],
-                   "result": traj.result_text(c), "error": c["is_error"]}
-                  for i, c in enumerate(traj.calls, 1)],
-        "hooks": [{"name": h["name"], "input": h.get("input"), "detail": traj.hook_detail(h)} for h in traj.hooks],
-        "denials": r.get("permission_denials") or [],
-        "result_text": r.get("result"), "stats": traj.stats_line(),
-        "status": r.get("subtype") or "running", "cost_usd": r.get("total_cost_usd"),
-        "turns": r.get("num_turns"), "duration_s": round((r.get("duration_ms") or 0) / 1000),
-    }
-
-
-def _lint(repo, n=50):
-    from . import lint
-    return lint.history(repo, n)
+    for p in d.glob("*.jsonl"):
+        out.extend(_lint_events(p) if p.name == "lint.jsonl" else _run_events(p))
+    out.sort(key=lambda e: e["ts"], reverse=True)
+    return out[:limit]
 
 
 def _digest(repo):
@@ -81,33 +127,22 @@ def _digest(repo):
 
 def make_handler(repo):
     class H(BaseHTTPRequestHandler):
-        def log_message(self, *a):  # quiet
+        def log_message(self, *a):
             pass
 
-        def _json(self, obj, code=200):
-            body = json.dumps(obj, default=str).encode()
+        def _send(self, body, ctype, code=200):
             self.send_response(code)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
 
         def do_GET(self):
-            path = unquote(self.path.split("?", 1)[0])
+            path = self.path.split("?", 1)[0]
             if path == "/":
-                body = PAGE.read_bytes()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            elif path == "/api/runs":
-                self._json(_runs(repo))
-            elif path.startswith("/api/run/"):
-                r = _run(repo, path[len("/api/run/"):])
-                self._json(r if r else {"error": "no such run"}, 200 if r else 404)
-            elif path == "/api/lint":
-                self._json(_lint(repo))
+                self._send(PAGE.read_bytes(), "text/html; charset=utf-8")
+            elif path == "/api/events":
+                self._send(json.dumps(events(repo), default=str).encode(), "application/json")
             elif path == "/events":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -127,7 +162,7 @@ def make_handler(repo):
                 except (BrokenPipeError, ConnectionResetError):
                     return
             else:
-                self._json({"error": "not found"}, 404)
+                self._send(b'{"error":"not found"}', "application/json", 404)
     return H
 
 

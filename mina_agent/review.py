@@ -322,7 +322,9 @@ def installed_from_repo(repo):
 
 
 def _state_file(repo):
-    return paths.state_dir(repo) / "reviews" / "checkout.json"
+    # Outside reviews/ so clearing generated review assets never loses the
+    # record of a checked-out PR.
+    return paths.state_dir(repo) / "review-checkout.json"
 
 
 def active_checkout(repo):

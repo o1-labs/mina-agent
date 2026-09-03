@@ -33,6 +33,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 MODES = ("opam", "nix", "none")
 
@@ -135,7 +136,13 @@ class Env:
         return list(cmd)
 
     def run(self, cmd, capture=False, cwd=None, **kw):
-        """Run cmd in the activated env. Returns CompletedProcess."""
+        """Run cmd in the activated env. Returns CompletedProcess.
+
+        dune invocations take a cross-process lock (harness/state/dune.lock):
+        dune 3.3.1 does not serialize concurrent instances on one _build, and
+        two of them (server + hook, or exec + a phase) corrupt each other's
+        temporary artifacts. ocamllsp's own read-only `dune ocaml-merlin`
+        calls are outside this and harmless."""
         argv = self.argv(cmd)
         env = self.activate()
         cwd = cwd or self.repo
@@ -144,8 +151,9 @@ class Env:
             _log(f"[harness] argv={json.dumps(argv)}")
             for k, (old, new) in _env_diff(os.environ, env).items():
                 _log(f"[harness] env {k}: {old!r} -> {new!r}")
-        return subprocess.run(_with_limits(argv), env=env, cwd=cwd,
-                              capture_output=capture, text=True, **kw)
+        with _dune_lock(self.repo, argv):
+            return subprocess.run(_with_limits(argv), env=env, cwd=cwd,
+                                  capture_output=capture, text=True, **kw)
 
     # -- reporting ----------------------------------------------------------
 
@@ -228,6 +236,31 @@ LIMITS_PRELUDE = (
 def _with_limits(argv):
     """Wrap argv so it runs under the raised ulimits."""
     return ["/bin/sh", "-c", LIMITS_PRELUDE, "harness-env"] + list(argv)
+
+
+import contextlib
+
+
+@contextlib.contextmanager
+def _dune_lock(repo, argv):
+    """fcntl lock held for the duration of a dune invocation; no-op otherwise."""
+    first = os.path.basename(argv[0]) if argv else ""
+    if first != "dune":
+        yield
+        return
+    import fcntl
+    from . import paths
+    lock_path = paths.state_dir(repo) / "dune.lock"
+    with open(lock_path, "w") as fh:
+        t0 = time.time()
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        waited = time.time() - t0
+        if waited > 1 and os.environ.get("HARNESS_VERBOSE"):
+            _log(f"[harness] waited {waited:.1f}s for dune.lock")
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 def _env_diff(old, new):

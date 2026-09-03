@@ -47,10 +47,34 @@ def strip_heredocs(command):
     return "\n".join(out)
 
 
+def _split_unquoted_newlines(text):
+    """Split on newlines that are not inside single or double quotes, so a
+    multi-line quoted argument (a commit message, a heredoc-free string) is
+    one token rather than several commands."""
+    out, cur, q, esc = [], [], None, False
+    for ch in text:
+        if esc:
+            cur.append(ch); esc = False; continue
+        if ch == "\\" and q != "'":
+            cur.append(ch); esc = True; continue
+        if q:
+            if ch == q:
+                q = None
+            cur.append(ch)
+        elif ch in ("'", '"'):
+            q = ch; cur.append(ch)
+        elif ch == "\n":
+            out.append("".join(cur)); cur = []
+        else:
+            cur.append(ch)
+    out.append("".join(cur))
+    return out
+
+
 def subcommands(command):
     """Split on shell separators, respecting quotes (docs list &&,||,;,|,|&,&,newline)."""
     subs = []
-    for line in strip_heredocs(REDIRECT_FD.sub(" ", command)).split("\n"):
+    for line in _split_unquoted_newlines(strip_heredocs(REDIRECT_FD.sub(" ", command))):
         lex = shlex.shlex(line, posix=True, punctuation_chars=";&|")
         lex.whitespace_split = True
         cur = []

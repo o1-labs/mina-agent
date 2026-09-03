@@ -6,7 +6,9 @@ type-checks, and tests go through one MCP server that runs dune in the right
 switch; the dependency graph is derived from the dune files, never written by
 hand; build configuration and the Rust proof-systems boundary cannot be
 edited; raw dune, opam, nix, cargo, and make cannot be run. Headless phases
-and interactive sessions both start from that same set of walls and facts.
+and interactive sessions both start from that same set of walls and facts,
+and only when invoked through `mina-agent`: nothing is written into the
+repo's Claude settings, so plain `claude` sessions are unaffected.
 
     uv tool install --editable ./harness
     mina-agent setup && mina-agent init && mina-agent doctor

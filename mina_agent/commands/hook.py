@@ -24,26 +24,42 @@ def post_edit():
         print(json.dumps(out))
 
 
-MESSAGES = {
-    "tools": "runs the OCaml toolchain directly; the mina-harness MCP tools (build / check / "
-             "check_dependents / test / test_one) run dune in the right switch with structured output",
-    "env": "mutates or bypasses the build environment (opam/nix/cargo/make/pip), which this harness never does",
-}
+DENIAL_CONTEXT = ("harness: if this command is denied, it is because it either runs the OCaml "
+                  "toolchain directly (use the mina-harness MCP tools build / check / check_dependents / "
+                  "test / test_one, which run dune in the right switch with structured output) or mutates "
+                  "the build environment (opam/nix/cargo/make/pip), which this harness never does.")
+
+
+def _first_for_call(tool_use_id):
+    """True for the first hook process handling this tool call. Several `if`
+    entries can match one command (Claude Code's matcher over-matches on
+    purpose, e.g. any command containing `$`), and each spawns its own
+    process; a marker file keyed by tool_use_id makes the context appear once."""
+    if not tool_use_id:
+        return True
+    import os
+    import tempfile
+    marker = os.path.join(tempfile.gettempdir(), f"mina-agent-prebash-{tool_use_id}")
+    try:
+        os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        return True
+    except FileExistsError:
+        return False
 
 
 @app.command("pre-bash")
-def pre_bash(why: str = typer.Option("tools", "--why", help="Which explanation to attach: tools | env.")):
+def pre_bash():
     """PreToolUse Bash: attach an explanation, never block.
 
     Reached only for commands Claude Code's own Bash matcher flags through the
-    hook `if` rules in settings (that matcher over-matches on purpose, e.g. on
-    quoted text). The deny rules alone decide whether the command runs; this
-    adds context so a denial comes with the reason and the alternative.
+    hook `if` rules in the session settings. The deny rules alone decide
+    whether the command runs; this adds one line of context per call so a
+    denial arrives with its reason and the alternative.
     """
-    cmd = (_payload().get("tool_input") or {}).get("command") or ""
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                      "additionalContext": f"harness: if `{cmd[:100]}` is denied, it is because it "
-                                           f"{MESSAGES.get(why, MESSAGES['tools'])}."}}))
+    payload = _payload()
+    if _first_for_call(payload.get("tool_use_id")):
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                 "additionalContext": DENIAL_CONTEXT}}))
 
 
 @app.command("pre-commit")

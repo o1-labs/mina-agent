@@ -6,9 +6,11 @@ Everything that launches a model session goes through here:
     run log (Bash is removed from phases, and the deny rules ride along);
   * interactive sessions (`mina-agent discuss`) via the `claude` TUI.
 
-Both get the same walls: the deny list from data/settings.template.json, the
-harness MCP server and nothing else (strict), the facts appended to the
-claude_code system prompt, and the activated switch as the environment.
+Both get the same walls from data/settings.template.json (deny rules and
+hooks), the harness MCP server and nothing else (strict), the facts appended
+to the claude_code system prompt, and the activated switch as the
+environment. Nothing is installed into the repo's .claude/, the user's MCP
+registry, or the skills directory: the harness applies only when invoked.
 """
 import asyncio
 import json
@@ -66,6 +68,15 @@ def post_edit_check_output(tool_input):
                                    "additionalContext": json.dumps(ctx)}}
 
 
+async def _pre_bash_cb(inp, tool_use_id, ctx):
+    """Headless counterpart of `mina-agent hook pre-bash`. The SDK calls it
+    once per matching HookMatcher, so no per-call dedupe is needed here."""
+    from .commands.hook import DENIAL_CONTEXT
+    return record_hook("PreToolUse", "Bash", inp.get("tool_input"),
+                       {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                               "additionalContext": DENIAL_CONTEXT}})
+
+
 async def _post_edit_cb(inp, tool_use_id, ctx):
     return record_hook("PostToolUse", inp.get("tool_name"), inp.get("tool_input"),
                        post_edit_check_output(inp.get("tool_input")))
@@ -75,9 +86,15 @@ async def _post_edit_cb(inp, tool_use_id, ctx):
 # shared configuration
 # --------------------------------------------------------------------------
 
-def deny_rules():
+def _template():
     with open(paths.SETTINGS_TEMPLATE) as fh:
-        return json.load(fh)["permissions"]["deny"]
+        t = json.load(fh)
+    t.pop("_comment", None)
+    return t
+
+
+def deny_rules():
+    return _template()["permissions"]["deny"]
 
 
 def mina_agent_bin():
@@ -87,6 +104,46 @@ def mina_agent_bin():
 def mcp_config():
     return {"mcpServers": {paths.MCP_SERVER_NAME: {
         "type": "stdio", "command": mina_agent_bin(), "args": ["serve"]}}}
+
+
+def session_settings():
+    """The settings an interactive harness session runs with, passed via
+    `claude --settings` so nothing is written into the repo's .claude/.
+    Hook commands point at this binary."""
+    t = _template()
+    binp = mina_agent_bin()
+    for matchers in t["hooks"].values():
+        for m in matchers:
+            for h in m["hooks"]:
+                h["command"] = h["command"].replace("mina-agent", f'"{binp}"', 1)
+    return t
+
+
+# hook command suffix -> in-process callback, for the SDK path
+def _callbacks():
+    return {"hook post-edit": _post_edit_cb, "hook pre-bash": _pre_bash_cb}
+
+
+def sdk_hooks():
+    """HookMatcher list for headless runs, generated from the same template.
+    SessionStart is skipped: headless runs get the facts via the system
+    prompt. Entries whose command has no in-process equivalent are skipped."""
+    from claude_agent_sdk import HookMatcher
+    out = {}
+    for event, matchers in _template()["hooks"].items():
+        if event == "SessionStart":
+            continue
+        for m in matchers:
+            fns, timeout = [], None
+            for h in m["hooks"]:
+                for suffix, fn in _callbacks().items():
+                    if h["command"].endswith(suffix) or f"{suffix} " in h["command"]:
+                        if fn not in fns:
+                            fns.append(fn)
+                        timeout = max(timeout or 0, h.get("timeout", 60))
+            if fns:
+                out.setdefault(event, []).append(HookMatcher(matcher=m.get("matcher"), hooks=fns, timeout=timeout))
+    return out
 
 
 def system_addition():
@@ -99,7 +156,7 @@ def system_addition():
 # --------------------------------------------------------------------------
 
 def build_options(phase, env, *, max_turns=None, max_budget_usd=None, model=None):
-    from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
+    from claude_agent_sdk import ClaudeAgentOptions
     disallowed = list(dict.fromkeys(phase["disallowed_tools"] + deny_rules()))
     return ClaudeAgentOptions(
         system_prompt={"type": "preset", "preset": "claude_code", "append": system_addition()},
@@ -117,7 +174,7 @@ def build_options(phase, env, *, max_turns=None, max_budget_usd=None, model=None
         plugins=([{"type": "local", "path": str(lsp.plugin_dir(env.repo))}]
                  if lsp.plugin_dir(env.repo) else []),
         include_hook_events=True,
-        hooks={"PostToolUse": [HookMatcher(matcher="Edit|Write", hooks=[_post_edit_cb], timeout=600)]},
+        hooks=sdk_hooks(),
         stderr=lambda line: STDERR.append(line),
     )
 
@@ -166,14 +223,18 @@ def run_headless(prompt, options, log_path, on_call=lambda traj, c: None):
 # --------------------------------------------------------------------------
 
 def interactive_argv(first_message, repo, extra_disallowed=()):
-    """`claude` TUI with the harness server, facts, and walls. The prompt is
-    the first user message. --disallowedTools is variadic, so it goes last."""
+    """`claude` TUI with the harness server, facts, and walls. Everything the
+    session needs travels on the command line (--settings, --mcp-config,
+    --plugin-dir); nothing is read from or written to the repo's .claude/."""
+    settings = session_settings()
+    if extra_disallowed:
+        settings["permissions"]["deny"] = list(extra_disallowed) + settings["permissions"]["deny"]
     argv = ["claude", first_message,
             "--append-system-prompt", system_addition(),
+            "--settings", json.dumps(settings),
             "--mcp-config", json.dumps(mcp_config()), "--strict-mcp-config"]
     if lsp.plugin_dir(repo):
         argv += ["--plugin-dir", str(lsp.plugin_dir(repo))]
-    argv += ["--disallowedTools"] + list(extra_disallowed) + deny_rules()
     return argv
 
 

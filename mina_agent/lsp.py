@@ -69,24 +69,3 @@ def plugin_dir(repo):
     """The generated plugin if init produced one, else None."""
     out = paths.generated_plugin(repo)
     return out if (out / ".lsp.json").exists() else None
-
-
-def link(repo):
-    """Symlink the generated plugin into ~/.claude/skills so the user's own
-    claude sessions load it (skills-directory plugins auto-load)."""
-    target = paths.generated_plugin(repo)
-    lnk = paths.SKILLS_DIR_LINK
-    lnk.parent.mkdir(parents=True, exist_ok=True)
-    if lnk.is_symlink():
-        if lnk.resolve() == target.resolve():
-            return lnk, "already linked"
-        lnk.unlink()
-    elif lnk.exists():
-        return lnk, "exists and is not a symlink; left alone"
-    lnk.symlink_to(target)
-    return lnk, "linked"
-
-
-def linked(repo):
-    lnk = paths.SKILLS_DIR_LINK
-    return lnk.is_symlink() and lnk.resolve() == paths.generated_plugin(repo).resolve()

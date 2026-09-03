@@ -26,6 +26,9 @@ def setup():
                       ("claude", "headless phases and discuss")):
         found = shutil.which(name, path=aenv.get("PATH"))
         print(f"{name:12s} {'ok  ' + found if found else 'MISSING  (' + why + ')'}")
+    from .. import dhall
+    path, msg = dhall.fetch(e.repo)
+    print(f"dhall        {'ok  ' + msg if path else 'MISSING  ' + msg}")
     tool = graph.build_tool(e)
     print(f"describe-dune built: {tool}")
     d = graph.derive_and_write(e)

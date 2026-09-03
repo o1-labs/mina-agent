@@ -162,10 +162,13 @@ def check_dhall(repo, env, files, staged):
     """Lint/Dhall: `make -C buildkite check_syntax check_lint check_format` (needs dhall)."""
     if not any(f.startswith("buildkite/src/") and f.endswith(".dhall") for f in files):
         return Result("dhall", "Lint/Dhall", "ok", "no dhall files in scope")
-    if not shutil.which("dhall"):
-        return Result("dhall", "Lint/Dhall", "skip", "dhall not installed; CI will run syntax/lint/format checks")
+    from . import dhall
+    ok, why = dhall.status(repo)
+    if not ok:
+        return Result("dhall", "Lint/Dhall", "skip", why)
+    lint_env = {**os.environ, "PATH": f"{dhall.binary(repo).parent}:{os.environ.get('PATH', '')}"}
     r = subprocess.run(["make", "-C", "buildkite", "check_syntax", "check_lint", "check_format"],
-                       cwd=repo, capture_output=True, text=True)
+                       cwd=repo, env=lint_env, capture_output=True, text=True)
     if r.returncode == 0:
         return Result("dhall", "Lint/Dhall", "ok", "syntax, lint, format clean")
     return Result("dhall", "Lint/Dhall", "fail", (r.stdout + r.stderr).strip()[-800:], [], "cd buildkite && make format")

@@ -7,4 +7,3 @@ derived.json
 logs/
 __pycache__/
 .venv/
-scratch/_build/

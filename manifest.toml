@@ -1,0 +1,187 @@
+# Mina agent harness manifest.
+#
+# Two kinds of knowledge live here:
+#   derived  - empty on purpose. Everything dune already knows (library ->
+#              dir -> modules -> deps) is produced by harness/derive.py into
+#              harness/derived.json. Never hand-edit that file.
+#   declared - the cross-boundary facts that cannot be derived: the
+#              OCaml/Rust seam, which libraries matter most, and which tests
+#              are cheap enough to run after an edit. Hand-maintained.
+#
+# Format is TOML (stdlib tomllib; no yaml parser is available here).
+# Library names are dune *private* names, i.e. keys of derived.json
+# "libraries". derive.py's "public_names" table maps public -> private.
+
+[derived]
+# Intentionally empty. See harness/derived.json.
+
+# ---------------------------------------------------------------------------
+# boundary: OCaml libraries that wrap the Rust proof-systems bindings.
+#
+# All four are defined in src/lib/crypto/kimchi_bindings/stubs/dune. That dune
+# file runs `cargo build -p kimchi-stubs --release --offline` to produce
+# libkimchi_stubs.a from the crates listed below, which live in the
+# proof-systems git submodule. The stub crate's Cargo.toml is
+# src/lib/crypto/kimchi_bindings/stubs/Cargo.toml.
+#
+# mutable = false means: the harness never edits anything under `rust_paths`
+# or the stubs' Cargo files. Permission deny rules and the PreToolUse hook
+# enforce this (Stage 5). Edits above the seam (kimchi_backend, pickles, ...)
+# are normal OCaml edits.
+# ---------------------------------------------------------------------------
+[boundary]
+mutable = false
+stubs_dir = "src/lib/crypto/kimchi_bindings/stubs"
+libraries = ["kimchi_types", "pasta_bindings", "kimchi_bindings", "pasta_bindings_backend_native"]
+crates = ["kimchi-stubs", "kimchi"]
+rust_paths = [
+  "src/lib/crypto/proof-systems",
+  "src/lib/crypto/kimchi_bindings/stubs/src",
+  "src/lib/crypto/kimchi_bindings/stubs/kimchi-stubs-vendors",
+  "src/lib/crypto/kimchi_bindings/stubs/Cargo.toml",
+  "src/lib/crypto/kimchi_bindings/stubs/Cargo.lock",
+  "src/lib/crypto/kimchi_bindings/stubs/rust-toolchain.toml",
+]
+# First OCaml consumers of the bindings, for orientation.
+first_consumers = ["kimchi_backend", "kimchi_pasta_snarky_backend"]
+
+# ---------------------------------------------------------------------------
+# core: libraries the harness treats as first-class. `cheap_test` names an
+# entry in [[tests]] below and is what `tests_for` returns first for a path
+# inside that library.
+# ---------------------------------------------------------------------------
+[core.pickles]
+dir = "src/lib/crypto/pickles"
+cheap_test = "pickles_base"
+notes = "pickles/test has 14 alcotest exes; test_step/test_wrap build real circuits."
+
+[core.snarky_backendless]
+dir = "src/lib/snarky/src/base"
+cheap_test = "snarky"
+notes = "src/lib/snarky is a git submodule (o1-labs/snarky); edits there land in a separate repo."
+
+[core.transaction_snark]
+dir = "src/lib/transaction_snark"
+cheap_test = "txn_snark_verify_simple"
+notes = "Most subdirs under transaction_snark/test do real proving."
+
+[core.mina_ledger]
+dir = "src/lib/mina_ledger"
+cheap_test = "mina_ledger"
+
+[core.mina_transaction_logic]
+dir = "src/lib/transaction_logic"
+cheap_test = "transaction_logic"
+
+# ---------------------------------------------------------------------------
+# inline_tests: ppx_inline_test blocks (let%test, let%test_unit) written inside
+# ordinary library modules. 156 libraries declare (inline_tests) in their dune
+# stanza; derived.json records this as has_inline_tests. They are NOT listed
+# individually here. The tools synthesize one entry per such library, named
+# "inline:<library>", from this template. {dir} is the library's directory.
+# A single failing block can be rerun with scripts/testone.sh <file> [name],
+# which calls the library's inline test runner with -only-test.
+# ---------------------------------------------------------------------------
+[inline_tests]
+name_prefix = "inline:"
+command_template = ["dune", "build", "@{dir}/runtest"]
+cost = "unmeasured"
+modes = ["opam", "nix"]
+# Measured 2026-09-03 for reference: currency ran 14 tests in 3 s warm.
+
+# ---------------------------------------------------------------------------
+# tests: runnable test targets.
+#   name      - key used by the `test` MCP tool and by core.*.cheap_test
+#   command   - argv, run verbatim through `harness/env.py run --`
+#   cost      - fast (< 60 s warm) | slow | integration
+#   measured  - wall seconds on this machine (Apple Silicon, dev profile,
+#               warm _build, `dune build --force`); 0 = not measured.
+#               First-time compile of a test exe adds 20-80 s on top.
+#   modes     - environments that can actually run it
+#   libraries - private library names this test covers; tests_for uses this
+#               alongside derived.json "dependents"
+# Measured 2026-09-03. Re-time with `dune build --force <alias>` via env.py.
+# ---------------------------------------------------------------------------
+
+[[tests]]
+name = "pickles_base"
+command = ["dune", "build", "@src/lib/crypto/pickles_base/test/runtest"]
+cost = "fast"
+measured = 1
+modes = ["opam", "nix"]
+libraries = ["pickles_base", "pickles"]
+
+[[tests]]
+name = "pickles_test_ro"
+command = ["dune", "exec", "src/lib/crypto/pickles/test/test_ro.exe"]
+cost = "fast"
+measured = 3
+modes = ["opam", "nix"]
+libraries = ["pickles"]
+
+[[tests]]
+name = "pickles_full"
+command = ["dune", "build", "@src/lib/crypto/pickles/test/runtest"]
+cost = "slow"
+measured = 0
+modes = ["opam", "nix"]
+libraries = ["pickles"]
+
+[[tests]]
+name = "snarky"
+command = ["dune", "build", "@src/lib/snarky/src/tests/runtest"]
+cost = "fast"
+measured = 1
+modes = ["opam", "nix"]
+libraries = ["snarky_backendless", "snarky_intf"]
+
+[[tests]]
+name = "mina_ledger"
+command = ["dune", "build", "@src/lib/mina_ledger/test/runtest"]
+cost = "fast"
+measured = 3
+modes = ["opam", "nix"]
+libraries = ["mina_ledger"]
+
+[[tests]]
+name = "transaction_logic"
+command = ["dune", "build", "@src/lib/transaction_logic/test/transaction_logic/runtest"]
+cost = "fast"
+measured = 5
+modes = ["opam", "nix"]
+libraries = ["mina_transaction_logic"]
+
+[[tests]]
+name = "txn_snark_verify_simple"
+command = ["dune", "build", "@src/lib/transaction_snark/test/verify-simple-test/runtest"]
+cost = "fast"
+measured = 7
+modes = ["opam", "nix"]
+libraries = ["transaction_snark"]
+
+[[tests]]
+name = "txn_snark_transaction_union"
+command = ["dune", "build", "@src/lib/transaction_snark/test/transaction_union/runtest"]
+cost = "slow"
+measured = 105
+modes = ["opam", "nix"]
+libraries = ["transaction_snark"]
+
+[[tests]]
+name = "all_unit_tests"
+# What CI runs: buildkite/scripts/unit-test.sh dev src/lib (tagged VeryLong).
+command = ["dune", "runtest", "src/lib"]
+cost = "slow"
+measured = 0
+modes = ["opam", "nix"]
+libraries = []
+
+[[tests]]
+name = "test_executive"
+# Placeholder. src/app/test_executive needs the local engine or cloud
+# infrastructure; nothing can run it on a developer laptop here.
+command = ["dune", "exec", "src/app/test_executive/test_executive.exe", "--", "--help"]
+cost = "integration"
+measured = 0
+modes = []
+libraries = []

@@ -1,0 +1,8 @@
+# Generated or built artifacts. Everything here is reproducible.
+# compiled describe-dune (harness/derive.py --build)
+bin/
+# library graph (harness/derive.py), ~1 s to regenerate
+derived.json
+# headless run transcripts (harness/run.py)
+logs/
+__pycache__/

@@ -128,6 +128,11 @@ class Env:
             self._activated_env = _nix_activate(self.repo)
         else:
             raise RuntimeError(f"unknown mode {self.mode}")
+        # Skip the JS/wasm bindings the way CI does (buildkite unit-test.sh):
+        # building them regenerates committed .node/.d.ts artifacts under
+        # kimchi_bindings/js, dirtying a clean tree. The harness only builds
+        # and type-checks OCaml, so it never needs them.
+        self._activated_env.setdefault("NO_JS_BUILD", "1")
         return self._activated_env
 
     def argv(self, cmd):

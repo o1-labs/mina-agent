@@ -332,8 +332,17 @@ def active_checkout(repo):
     return json.loads(f.read_text()) if f.exists() else None
 
 
+def _sync_submodules(repo):
+    """Match the submodule working trees to the current branch. A PR based on
+    a different base (e.g. develop vs compatible) records different commits
+    for proof-systems and the kimchi vendors; git does not update submodule
+    working trees on `checkout`, so without this the compiled Rust stubs and
+    the OCaml bindings disagree (gate_type mismatch) and nothing builds."""
+    _git(repo, "submodule", "update", "--init", "--recursive")
+
+
 def checkout(repo, number):
-    """`gh pr checkout N` on a clean tree, remembering where we were."""
+    """`gh pr checkout N` on a clean tree, then sync submodules to the branch."""
     if active_checkout(repo):
         a = active_checkout(repo)
         raise RuntimeError(f"PR #{a['number']} is already checked out (from {a['previous']}); "
@@ -345,19 +354,24 @@ def checkout(repo, number):
                            "would remove it. Reinstall non-editable: uv tool install ./harness --reinstall")
     previous = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
     _gh(repo, "pr", "checkout", str(number))
+    _sync_submodules(repo)
     _state_file(repo).parent.mkdir(parents=True, exist_ok=True)
     _state_file(repo).write_text(json.dumps({"number": number, "previous": previous}))
     return previous
 
 
 def done(repo):
-    """Return to the branch that was checked out before `review --checkout`."""
+    """Return to the branch checked out before --checkout, and sync submodules
+    back to it. Regenerated JS build artifacts (committed .node/.d.ts the
+    build overwrites) are discarded, since they are not the reviewer's work."""
     a = active_checkout(repo)
     if not a:
         raise RuntimeError("no PR is checked out by mina-agent review")
+    _git(repo, "checkout", "--", "src/lib/crypto/kimchi_bindings/js/native/artifacts", check=False)
     if _dirty(repo):
         raise RuntimeError("working tree has uncommitted changes on the PR branch; commit, stash, or discard them first")
     _git(repo, "checkout", "-q", a["previous"])
+    _sync_submodules(repo)
     _state_file(repo).unlink()
     return a
 

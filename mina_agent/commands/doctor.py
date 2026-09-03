@@ -131,12 +131,29 @@ def linters(e):
     yield Check("dhall", OK if ok else NOTE, detail)
 
 
+def review_tools(e):
+    """`mina-agent review` needs gh (logged in, able to see this repo's PRs)
+    and, for structural diffs, difftastic. Neither is required elsewhere."""
+    gh = shutil.which("gh")
+    if not gh:
+        yield Check("gh", NOTE, "not installed; `mina-agent review` unavailable (brew install gh)")
+    elif _run(["gh", "auth", "status"]).returncode != 0:
+        yield Check("gh", NOTE, f"{gh} installed but not logged in (gh auth login)")
+    elif _run(["gh", "pr", "list", "--limit", "1"], cwd=e.repo).returncode != 0:
+        yield Check("gh", NOTE, f"{gh} logged in but cannot list this repository's PRs")
+    else:
+        yield Check("gh", OK, f"{gh}, logged in, can read this repository's PRs")
+    d = shutil.which("difft")
+    yield Check("difftastic", OK if d else NOTE, d or "not installed; review diffs fall back to git diff (brew install difftastic)")
+
+
 def notes(e):
     p = paths.notes_file(e.repo)
     yield Check("notes", NOTE, str(p) if p.exists() else "none yet (created by discuss)")
 
 
-CHECKS = [toolchain, binaries, lsp, opam_export, graph, session_config, no_leakage, git_hook, linters, notes]
+CHECKS = [toolchain, binaries, lsp, opam_export, graph, session_config, no_leakage, git_hook, linters,
+          review_tools, notes]
 
 
 def render(checks):

@@ -659,9 +659,81 @@ def errors(file: str, timeout_s: int = 60) -> dict:
     return out
 
 
+def usages(file: str, line: int, col: int, timeout_s: int = 120) -> dict:
+    """Every use of the binding at file:line:col (1-based) across the repo:
+    its library plus everything that depends on it, executables and tests
+    included. Read from the typed trees the compiler wrote (.cmt in _build),
+    so each result is the typechecker's own resolution: no text matching,
+    ppx-generated references excluded. The position may be the definition or
+    any use of it (merlin resolves it to the definition first). Values,
+    constructors, record fields, and types; not modules (use dependents_of
+    for who depends on a library). Sees only compiled units: `unbuilt` lists
+    those in scope it could not read."""
+    from . import usages as U
+    g = GRAPH.get()
+
+    def attempt(def_file, dl, dc):
+        u = unit_of(def_file)
+        if u is None:
+            raise ValueError(f"{def_file} is not inside any described dune unit")
+        kind, key, _ = u
+        units = U.cone(g, kind, key)
+        cmts, unbuilt = U.cmt_files(ENV.repo, g, units)
+        return U.run(ENV, def_file, dl, dc, cmts, timeout_s), key, units, unbuilt
+
+    t0 = time.time()
+    # The position is taken as a declaration first (a miss costs one .cmt
+    # read). Only when nothing is declared there is it a use of the binding,
+    # which merlin resolves to the definition. Asking merlin first is wrong at
+    # a declaration: for `type t = M.t = A | B` it jumps to the manifest M.t.
+    def_file, dl, dc = rel(file), line, col
+    res, key, units, unbuilt = attempt(def_file, dl, dc)
+    if res.get("error", "").startswith("no declaration"):
+        _, val, _ = _merlin("locate", def_file, dl, dc)
+        if isinstance(val, dict):
+            f = val.get("file") or def_file
+            try:
+                def_file = rel(f) if os.path.isabs(f) else f
+            except ValueError:
+                return {"ok": False, "file": rel(file), "line": line, "col": col,
+                        "note": f"defined outside the repo ({f}); bindings of external libraries are not searched"}
+            dl, dc = val["pos"]["line"], val["pos"]["col"] + 1
+            res, key, units, unbuilt = attempt(def_file, dl, dc)
+    elapsed = round(time.time() - t0, 1)
+    if "error" in res:
+        return {"ok": False, "file": def_file, "line": dl, "col": dc, "elapsed_s": elapsed,
+                "unbuilt": unbuilt, "note": res["error"]}
+    by_lib = {}
+    for h in res["usages"]:
+        hu = unit_of(h["file"])
+        h["library"] = hu[1] if hu else None
+        by_lib[h["library"]] = by_lib.get(h["library"], 0) + 1
+    n = len(res["usages"])
+    out = {"ok": True,
+           "binding": {**res["target"], "file": def_file, "line": dl, "col": dc, "library": key},
+           "usage_count": n, "usages": res["usages"][:500], "truncated": n > 500,
+           "by_library": dict(sorted(by_lib.items(), key=lambda kv: (-kv[1], str(kv[0])))),
+           "scope": {"units": len(units), "files_read": res["files_read"],
+                     "unreadable": len(res["unreadable"])},
+           "unbuilt": unbuilt, "unresolved_types": res["unresolved_types"],
+           "unresolved_files": res.get("unresolved_files", []), "elapsed_s": elapsed}
+    notes = []
+    if unbuilt:
+        notes.append(f"{len(unbuilt)} unit(s) in scope have never been compiled, so their "
+                     "references are not visible; build them (check) to complete the answer")
+    if res["unresolved_types"]:
+        notes.append(f"{res['unresolved_types']} type reference(s) with a local module head could not "
+                     "be resolved (functor parameters, signature-local types, or an environment that "
+                     "failed to rebuild); a use through a local module alias could be among them, "
+                     "see unresolved_files")
+    if notes:
+        out["note"] = "; ".join(notes)
+    return out
+
+
 TOOLS = ["env_status", "build", "check", "check_dependents", "test", "test_one",
-         "tests_for", "deps_of", "dependents_of", "library_of", "find_module", "type_at",
-         "definition", "errors"]
+         "tests_for", "deps_of", "dependents_of", "library_of", "find_module", "usages",
+         "type_at", "definition", "errors"]
 
 
 
@@ -703,7 +775,10 @@ def facts() -> list:
                "inner-loop check after an edit; check decides whether an edit compiles and "
                "check_dependents whether its consumers still do (the slower, cross-module "
                "truth); find_module maps a module name to its file and owning library, the key "
-               "for deps_of/tests_for; type_at/definition describe code as last compiled; after every Edit of "
+               "for deps_of/tests_for; usages lists every use of a value, constructor, field, or "
+               "type across the repo from the compiled typed trees (the LSP findReferences and "
+               "merlin occurrences are file-local on this toolchain); type_at/definition describe "
+               "code as last compiled; after every Edit of "
                "a .ml/.mli file a hook runs check automatically and returns its diagnostics. "
                "Raw dune/opam/nix/cargo/make "
                "commands are denied by permission rules; checked-in scripts run normally; "

@@ -85,6 +85,9 @@ def graph(e):
         yield Check("derived graph", OK if fresh else FAIL, str(dj) + ("" if fresh else " is stale; rerun mina-agent init"))
     else:
         yield Check("derived graph", FAIL, "missing; run mina-agent setup && mina-agent init")
+    ub = paths.usages_bin(e.repo)
+    yield Check("usages", OK if ub.exists() else FAIL,
+                str(ub) if ub.exists() else "not built (reads .cmt typed trees for the usages tool); run mina-agent setup")
 
 
 def session_config(e):

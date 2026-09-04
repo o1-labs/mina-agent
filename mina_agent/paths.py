@@ -18,6 +18,7 @@ PHASES = DATA / "phases"
 PLUGIN = DATA / "plugin"          # template: .lsp.json for ocamllsp; init writes the resolved copy to state/plugin
 SKILLS_DIR_LINK = Path.home() / ".claude" / "skills" / "mina-agent"
 VENDOR_DESCRIBE_DUNE = DATA / "vendor" / "describe-dune"
+TOOLS = DATA / "tools"            # our own compiler-libs programs (usages.ml); setup compiles them into state/bin
 MCP_SERVER_NAME = "mina-harness"
 
 
@@ -62,6 +63,12 @@ def describe_dune_bin(repo):
     p = state_dir(repo) / "bin"
     p.mkdir(parents=True, exist_ok=True)
     return p / "describe-dune"
+
+
+def usages_bin(repo):
+    p = state_dir(repo) / "bin"
+    p.mkdir(parents=True, exist_ok=True)
+    return p / "usages"
 
 
 def git_hook(repo, name="pre-commit"):

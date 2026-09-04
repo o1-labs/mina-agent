@@ -31,6 +31,8 @@ def setup():
     print(f"dhall        {'ok  ' + msg if path else 'MISSING  ' + msg}")
     tool = graph.build_tool(e)
     print(f"describe-dune built: {tool}")
+    from .. import usages
+    print(f"usages built: {usages.build_tool(e)}")
     d = graph.derive_and_write(e)
     print(f"graph: {graph.summary(d)}")
     print("next: mina-agent init")

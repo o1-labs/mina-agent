@@ -178,7 +178,12 @@ def system_addition():
 def build_options(phase: Phase, env, *, max_turns=None, max_budget_usd=None, model=None):
     from claude_agent_sdk import ClaudeAgentOptions
     disallowed = list(dict.fromkeys([*phase.disallowed_tools, *deny_rules()]))
+    # The base built-in set is exactly what the phase allows. With the full
+    # Claude Code inventory (45 tools) the CLI defers the MCP tools behind
+    # ToolSearch and the model spends its first turn loading them.
+    builtin = [t for t in phase.allowed_tools if not t.startswith("mcp__")]
     return ClaudeAgentOptions(
+        tools=builtin,
         system_prompt={"type": "preset", "preset": "claude_code", "append": system_addition()},
         mcp_servers=cast(Any, mcp_config()["mcpServers"]),
         strict_mcp_config=True,

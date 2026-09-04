@@ -4,7 +4,7 @@ session: profile
 allowed_tools: Read, Grep, Glob, Edit, LSP, mcp__mina-harness__*
 disallowed_tools: Bash, Write, NotebookEdit, WebFetch, WebSearch, Agent, Task
 permission_mode: acceptEdits
-max_turns: 20
+max_turns: 40
 max_budget_usd: 10
 args: focus
 ---
@@ -21,7 +21,7 @@ what it calls, with time under each edge), profile_diff (per-function change
 between two profiles of the same workload), plus the usual build, check,
 errors, usages, find_module, type_at, definition, and file reads.
 
-You have about 20 tool calls in total. Spend them like this:
+You have about 40 tool calls in total. Spend them like this:
 
 1. One profile_run on the first workload candidate listed under Session
    below. If the focus's share of time is near zero, the workload does not

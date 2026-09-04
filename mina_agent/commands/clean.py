@@ -33,6 +33,11 @@ def clean(yes: bool = typer.Option(False, "--yes", "-y", help="Remove without as
     if not state.is_dir() or not any(state.iterdir()):
         print(f"{state}: nothing to remove")
         return
+    from .. import profile as P
+    if P.active(str(state.parent.parent)):
+        typer.echo("a profiling session is active (harness/state/profile/session.json holds the original dune "
+                   "files); run mina-agent profile --restore first", err=True)
+        raise typer.Exit(2)
     lock = state / "dune.lock"
     if lock.exists():
         with open(lock, "a") as fh:

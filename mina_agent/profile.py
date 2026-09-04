@@ -16,12 +16,14 @@ the optimization itself, and windows the model added are its to remove.
 """
 import base64
 import datetime as dt
+import hashlib
 import json
 import os
 import re
 import subprocess
 
 from . import landmarks, paths
+from .graph import write_json_atomic
 
 DUNE_SUBCOMMANDS = ("build", "exec", "runtest", "test")
 
@@ -45,8 +47,11 @@ def load(repo):
 
 
 def save(repo, s):
-    with open(session_file(repo), "w") as fh:
-        json.dump(s, fh, indent=1)
+    write_json_atomic(session_file(repo), s)
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def active(repo):
@@ -171,6 +176,7 @@ def start(repo, g, focus, scope, libs):
          "focus": focus, "scope": scope, "libraries": libs,
          "dirs": [g["libraries"][l]["dir"] for l in libs],
          "injected": {dune: base64.b64encode(text.encode()).decode() for dune, (text, _) in plan.items()},
+         "injected_sha": {dune: _sha(new) for dune, (_, new) in plan.items()},
          "skipped": skipped, "profiles": []}
     save(repo, s)
     return s
@@ -178,13 +184,21 @@ def start(repo, g, focus, scope, libs):
 
 def restore(repo):
     """Put every injected dune file back and end the session. Returns a
-    report; never touches .ml/.mli files."""
+    report; never touches .ml/.mli files, and never overwrites a dune file
+    that was edited after injection (reported under `edited` instead)."""
     s = load(repo)
     if s is None:
-        return {"restored": [], "still_dirty": [], "source_edits": [], "note": "no active session"}
-    restored, still_dirty = [], []
+        return {"restored": [], "edited": [], "still_dirty": [], "source_edits": [], "windows_left": [],
+                "profiles": [], "note": "no active session"}
+    restored, edited, still_dirty = [], [], []
     for dune, b64 in s["injected"].items():
-        with open(os.path.join(repo, dune), "w", encoding="utf-8") as fh:
+        full = os.path.join(repo, dune)
+        with open(full, encoding="utf-8") as fh:
+            current = fh.read()
+        if _sha(current) != s.get("injected_sha", {}).get(dune, _sha(current)):
+            edited.append(dune)     # someone changed it during the session; theirs to resolve
+            continue
+        with open(full, "w", encoding="utf-8") as fh:
             fh.write(base64.b64decode(b64).decode())
         restored.append(dune)
         if _git_dirty(repo, dune):
@@ -194,9 +208,11 @@ def restore(repo):
         r = subprocess.run(["git", "-C", os.path.join(repo, d), "status", "--porcelain", "--", "."],
                            capture_output=True, text=True)
         edits += [l[3:] for l in r.stdout.splitlines() if l[3:].endswith((".ml", ".mli"))]
+    edits = sorted(set(edits))
+    windows_left = [f for f in edits if "[@landmark" in open(os.path.join(repo, f), encoding="utf-8").read()]
     session_file(repo).unlink()
-    return {"restored": restored, "still_dirty": still_dirty, "source_edits": sorted(set(edits)),
-            "profiles": s["profiles"]}
+    return {"restored": restored, "edited": edited, "still_dirty": still_dirty, "source_edits": edits,
+            "windows_left": windows_left, "profiles": s["profiles"]}
 
 
 # --------------------------------------------------------------------------
@@ -250,10 +266,13 @@ def resolve_workload(g, manifest_tests, spec):
 
 
 def next_profile_path(repo, spec):
-    s = load(repo)
-    n = len(s["profiles"]) + 1 if s else 1
+    """Next free NNN-<spec>.json in the profile dir, numbered after whatever
+    is on disk (a run that wrote a profile but was never recorded still
+    holds its number)."""
+    taken = [int(m.group(1)) for p in state_dir(repo).glob("*.json")
+             if (m := re.match(r"(\d{3})-", p.name))]
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", spec)
-    return state_dir(repo) / f"{n:03d}-{safe}.json"
+    return state_dir(repo) / f"{max(taken, default=0) + 1:03d}-{safe}.json"
 
 
 def record_profile(repo, entry):

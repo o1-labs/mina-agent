@@ -48,6 +48,18 @@ is the whole run.
 """
 
 
+def _report(rep, out):
+    """The restore report, one line per file that needs a human decision."""
+    for f in rep["edited"]:
+        out(f"  dune file edited during the session, left as is (still carries the landmarks stanza): {f}")
+    for f in rep["still_dirty"]:
+        out(f"  still differs from git after restore: {f}")
+    for f in rep["source_edits"]:
+        out(f"  source edit left in place (yours to keep or revert): {f}")
+    for f in rep["windows_left"]:
+        out(f"  [@landmark] windows left behind, remove them: {f}")
+
+
 def _resolve_focus(tools, g, focus):
     if focus in g["libraries"]:
         return focus
@@ -130,10 +142,7 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     if restore:
         rep = P.restore(e.repo)
         print(f"restored {len(rep['restored'])} dune file(s)" + (f": {rep.get('note')}" if rep.get("note") else ""))
-        for f in rep["still_dirty"]:
-            print(f"  still differs from git after restore: {f}")
-        for f in rep["source_edits"]:
-            print(f"  source edit left in place (yours to keep or revert): {f}")
+        _report(rep, print)
         return
     if not e.usable:
         raise envmod.NoToolchain(e)
@@ -185,7 +194,4 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
         rep = P.restore(e.repo)
         typer.echo(f"session ended; restored {len(rep['restored'])} dune file(s), "
                    f"{len(rep['profiles'])} profile(s) kept in {P.state_dir(e.repo)}", err=True)
-        for f in rep["still_dirty"]:
-            typer.echo(f"  still differs from git after restore: {f}", err=True)
-        for f in rep["source_edits"]:
-            typer.echo(f"  source edit left in place (yours to keep or revert): {f}", err=True)
+        _report(rep, lambda m: typer.echo(m, err=True))

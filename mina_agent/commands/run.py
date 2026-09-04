@@ -15,6 +15,7 @@ from ..model import Phase
 
 def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model):
     from .. import env as envmod, graph, profile as P
+    from .profile import _report
     e = envmod.require()
     g = graph.load_or_derive(e)
     prompt = phases.render(phase, args)
@@ -45,7 +46,11 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
     log_path = paths.logs_dir(e.repo) / f"{stamp}-{phase.name}.jsonl"
     print(f"phase {phase.name}  args {args}  log {os.path.relpath(log_path, e.repo)}\n")
     if session:
-        s = P.start(e.repo, g, session[0], "lib", session[1])
+        try:
+            s = P.start(e.repo, g, session[0], "lib", session[1])
+        except RuntimeError as ex:
+            typer.echo(f"cannot start the profiling session: {ex}", err=True)
+            raise typer.Exit(2)
         print(f"profiling session: instrumented {len(s['injected'])} dune file(s) for {session[0]}\n")
     try:
         traj = agent.run_headless(prompt, options, log_path,
@@ -55,8 +60,7 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
             rep = P.restore(e.repo)
             print(f"\nprofiling session ended: restored {len(rep['restored'])} dune file(s), "
                   f"{len(rep['profiles'])} profile(s) kept")
-            for f in rep["source_edits"]:
-                print(f"  source edit left in place: {f}")
+            _report(rep, print)
     if agent.STDERR:
         sys.stderr.write("\n".join(agent.STDERR[-20:]) + "\n")
     finish(traj, phase.name, str(log_path), trace)

@@ -125,4 +125,9 @@ def file_issue(title: str, body: str, bundle_zip: str | None = None) -> dict:
 
 
 def bundle_json(b: Bundle) -> dict:
-    return to_json(b)
+    runs = [f for f in b.files if f.startswith("runs/")]
+    return to_json(b) | {
+        "tell_the_user": (f"Evidence bundle: directory {b.directory} (browse), zip {b.zip} (attach). "
+                          f"Files: {', '.join(b.files)}."
+                          + ("" if runs else " No run logs: only headless runs (fix-build-error, profile-hunt, "
+                                              "fix-bug) write them; this was an interactive session."))}

@@ -25,9 +25,13 @@ the user's explicit agreement on the final text.
    directory and a zip of it under the system temp dir with: environment
    (mode, dune, ocaml, harness and Mina commits), `doctor` output, the last
    headless run logs and their summaries (that is what `--trace` produced),
-   the lint gate log, and the active profiling session if any. Read the
-   files in the bundle directory that bear on the report; quote the exact
-   error text from them.
+   the lint gate log, and the active profiling session if any. As soon as
+   it returns, tell the user where the evidence is, with the full paths:
+   the bundle directory (to browse) and the zip (to attach), and which
+   files it holds. Say plainly if it holds no run logs (interactive
+   sessions write none; only headless runs do). Then read the files in the
+   bundle directory that bear on the report and quote the exact error text
+   from them.
 
 2. **Draft the report** with this shape, filled from what happened in this
    session and the bundle:
@@ -48,7 +52,8 @@ the user's explicit agreement on the final text.
    <the environment block from the bundle: harness commit, Mina commit, mode, dune, ocaml, OS>
 
    ## Evidence
-   <relevant excerpts; note the bundle's file names>
+   <relevant excerpts>
+   Bundle: <full zip path> (<the files it holds>)
    ```
 
 3. **Agree on it.** Show the full draft and ask for corrections. Iterate
@@ -57,8 +62,8 @@ the user's explicit agreement on the final text.
 4. **File it.** Call `bug_report_file` with the agreed title and body and
    the bundle path. Then:
    - If it filed: give the issue URL. GitHub has no upload API, so the zip
-     could not be attached; say where the zip is and that dragging it onto
-     the issue page in the browser attaches it.
+     could not be attached; repeat the zip's full path and say that
+     dragging it onto the issue page in the browser attaches it.
    - If `gh` is missing or not authenticated: the tool saved the draft as a
      markdown file. Give that path, the zip path, and the new-issue URL
      `https://github.com/o1-labs/mina-agent/issues/new`, and ask the user

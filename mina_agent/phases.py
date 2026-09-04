@@ -14,8 +14,9 @@
     ---
     Run the mina-harness `build` tool on `{{target}}` ...
 
-Each file under mina_agent/data/phases/ becomes a `mina-agent <name>`
-subcommand whose --<arg> options come from `args`. Nothing is listed by hand.
+Each file under mina_agent/data/phases/ becomes a `mina-agent run <name>`
+command whose --<arg> options come from `args`. Nothing is listed by hand.
+How to add one: PHASES.md at the harness root.
 """
 import re
 import sys

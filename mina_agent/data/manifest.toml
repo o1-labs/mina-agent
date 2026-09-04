@@ -188,7 +188,7 @@ libraries = []
 
 # ---------------------------------------------------------------------------
 # plugins: external Claude Code plugins loaded ONLY by harness sessions
-# (discuss, review). `mina-agent init` clones each into harness/state/plugins
+# (discuss, review). `mina-agent admin init` clones each into harness/state/plugins
 # at the pinned ref; nothing is vendored here or installed into the user's
 # Claude configuration. Pin a commit or tag, not a branch.
 # ---------------------------------------------------------------------------
@@ -211,14 +211,14 @@ ref = "16dc239"
 [develop]
 bash_heads = ["git", "gh", "cd", "ls", "cat", "head", "tail", "wc", "diff", "find", "rg", "grep",
               "sort", "uniq", "tr", "cut", "echo", "printf", "pwd", "which", "true", "false", "test", "["]
-mina_agent_subcommands = ["lint", "list", "status", "doctor"]
+mina_agent_subcommands = ["lint", "show", "status", "doctor"]
 # Of the allowed heads, what runs without a prompt. Everything else the hook
 # lets through still asks (git push, rebase, reset, gh pr create ...).
 auto_allow = ["Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)", "Bash(git blame*)",
               "Bash(git grep*)", "Bash(git branch*)", "Bash(git add *)", "Bash(git commit *)", "Bash(git switch *)",
               "Bash(git restore *)", "Bash(git stash*)", "Bash(git fetch*)", "Bash(git rev-parse *)",
               "Bash(gh issue *)", "Bash(gh pr view*)", "Bash(gh pr diff*)", "Bash(gh pr list*)", "Bash(gh pr checks*)",
-              "Bash(mina-agent lint*)", "Bash(mina-agent list*)", "Bash(mina-agent status*)", "Bash(mina-agent doctor*)",
+              "Bash(mina-agent lint*)", "Bash(mina-agent show *)", "Bash(mina-agent status*)", "Bash(mina-agent doctor*)",
               "Bash(cd *)", "Bash(ls*)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)", "Bash(diff *)",
               "Bash(find *)", "Bash(rg *)", "Bash(grep *)", "Bash(pwd)", "Bash(which *)", "Bash(echo *)", "Bash(printf *)"]
 deny_tools = ["WebFetch", "WebSearch", "Agent", "Task", "NotebookEdit"]

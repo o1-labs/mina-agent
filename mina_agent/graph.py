@@ -6,7 +6,7 @@ copy only dune / dune-project / *.inc / *.opam files into a temp tree, run
 o1-labs' describe-dune there, and read its JSON. Then reshape that JSON into
 lookup tables for the MCP tools (deps_of, dependents_of, tests_for).
 
-CLI: mina-agent derive [--check|--build] (hidden); setup and init call it.
+CLI: mina-agent admin derive [--check|--build] (hidden); setup and init call it.
 
 The tool is compiled on first use from mina_agent/data/vendor/describe-dune
 into harness/state/bin/describe-dune with the one-line build from its

@@ -124,12 +124,26 @@ def make_command(phase: Phase):
     return command
 
 
-def register(app):
+def _moved_alias(inner, name, moved_to):
+    """`inner` under its old name, saying where it moved before running."""
+    def alias(**kw):
+        sys.stderr.write(f"mina-agent: `{name}` moved to `mina-agent {moved_to} {name}`\n")
+        return inner(**kw)
+    setattr(alias, "__signature__", getattr(inner, "__signature__"))
+    alias.__annotations__, alias.__name__, alias.__doc__ = inner.__annotations__, inner.__name__, inner.__doc__
+    return alias
+
+
+def register(app, *, hidden=False, moved_to=None):
     """One command per valid phase. A phase whose front-matter cannot become
     a command (e.g. an arg name that is not an identifier) is reported and
-    skipped rather than breaking every other command."""
+    skipped rather than breaking every other command. moved_to registers the
+    commands as hidden aliases that say where they now live."""
     for phase in phases.all_phases():
         try:
-            app.command(phase.command_name)(make_command(phase))
+            cmd = make_command(phase)
+            if moved_to:
+                cmd = _moved_alias(cmd, phase.command_name, moved_to)
+            app.command(phase.command_name, hidden=hidden)(cmd)
         except (ValueError, TypeError) as ex:
             sys.stderr.write(f"mina-agent: skipping phase {phase.name}: {ex}\n")

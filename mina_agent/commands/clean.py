@@ -25,7 +25,7 @@ def clean(yes: bool = typer.Option(False, "--yes", "-y", help="Remove without as
     """Remove harness/state: the derived graph, compiled tools, logs, notes, the
     generated LSP plugin, and cloned plugins.
 
-    Everything there is generated; `mina-agent setup && mina-agent init`
+    Everything there is generated; `mina-agent admin setup && mina-agent admin init`
     recreates it. The installed tool, the git pre-commit hook, and the repo
     itself are untouched. Refuses while a harness dune command holds the lock.
     """
@@ -58,4 +58,4 @@ def clean(yes: bool = typer.Option(False, "--yes", "-y", help="Remove without as
         print("kept")
         raise typer.Exit(1)
     shutil.rmtree(state)
-    print("removed. To regenerate:\n\n    mina-agent setup && mina-agent init\n")
+    print("removed. To regenerate:\n\n    mina-agent admin setup && mina-agent admin init\n")

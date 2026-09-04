@@ -12,7 +12,7 @@ and only when invoked through `mina-agent`: nothing is written into the
 repo's Claude settings, so plain `claude` sessions are unaffected.
 
     uv tool install ./harness            # --editable while developing the harness itself
-    mina-agent setup && mina-agent init && mina-agent doctor
+    mina-agent admin setup && mina-agent admin init && mina-agent doctor
     mina-agent --help
 
 The tool lives in uv's tool directory, not in the checkout, so it survives
@@ -20,7 +20,7 @@ checking out branches that predate `harness/`. Reinstall after changing the
 harness source.
 
 Every command answers `--help`. Listings of tools, tests, and phases are
-derived, not documented: `mina-agent list tools|tests|phases`.
+derived, not documented: `mina-agent show tools|tests|phases`.
 
 The one thing `--help` cannot tell you: the edit deny rules cover Claude's
 file tools and the shell commands Claude Code recognises, not a script the
@@ -54,7 +54,7 @@ once you agree on the text. Without `gh` it saves the draft and tells you
 where both files are. GitHub cannot take the zip through the API; drag it
 onto the issue in the browser.
 
-Verifying a PR's performance claims: `mina-agent verify-perf --pr <number>`
+Verifying a PR's performance claims: `mina-agent run verify-perf --pr <number>`
 reads the PR, locates the workload it says it measured (and stops if it
 does not say), then measures base and head with no instrumentation:
 /usr/bin/time for wall clock and peak RSS, the runtime's GC counters for

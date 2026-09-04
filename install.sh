@@ -12,6 +12,6 @@ command -v uv >/dev/null 2>&1 || { echo "install.sh: uv is required (brew instal
 [ -f "$here/../dune-project" ] || { echo "install.sh: $here is not inside a Mina checkout (expected ../dune-project)" >&2; exit 1; }
 uv tool install --force --editable "$here"
 cd "$here/.."
-mina-agent setup
-mina-agent init
+mina-agent admin setup
+mina-agent admin init
 mina-agent doctor

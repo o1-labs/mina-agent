@@ -1,7 +1,7 @@
 """The one seam to Claude Code.
 
 Everything that launches a model session goes through here:
-  * headless phases (`mina-agent fix-build-error ...`) via the Claude Agent
+  * headless phases (`mina-agent run fix-build-error ...`) via the Claude Agent
     SDK's query(), with an in-process post-edit check hook and a serialized
     run log (Bash is removed from phases, and the deny rules ride along);
   * interactive sessions (`mina-agent discuss`) via the `claude` TUI.

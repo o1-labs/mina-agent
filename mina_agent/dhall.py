@@ -122,7 +122,7 @@ def status(repo):
     on_path = shutil.which("dhall")
     pv = version_of(on_path) if on_path else None
     plat, why = platform_for_release()
-    hint = "run mina-agent setup" if plat else why
+    hint = "run mina-agent admin setup" if plat else why
     if pv:
         return None, f"PATH has dhall {pv} but CI pins {v}; formatting differs, not used. {hint}"
     return None, f"pinned dhall {v} not installed; Lint/Dhall skipped locally. {hint}"

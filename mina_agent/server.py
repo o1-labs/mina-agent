@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """mina-harness MCP server (stdio). Thin wrapper over tools.py.
 
-Run:   mina-agent serve   (what `mina-agent init` registers with claude mcp add)
+Run:   mina-agent serve   (what `mina-agent admin init` registers with claude mcp add)
 """
 import functools
 

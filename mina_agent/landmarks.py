@@ -82,7 +82,7 @@ def fetch(env):
 def status(repo):
     if present(repo):
         return True, f"{vendor_dir(repo)} (landmarks {VERSION}, patched for dune 3.3; built only under --instrument-with)"
-    return False, "not vendored; run mina-agent setup (fetches with opam source, installs nothing)"
+    return False, "not vendored; run mina-agent admin setup (fetches with opam source, installs nothing)"
 
 
 # --------------------------------------------------------------------------

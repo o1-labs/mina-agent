@@ -202,7 +202,7 @@ def start(repo, g, focus, scope, libs) -> Session:
     if active(repo):
         raise RuntimeError("a profiling session is already active; end it with mina-agent profile --restore")
     if not landmarks.present(repo):
-        raise RuntimeError("landmarks is not vendored; run mina-agent setup")
+        raise RuntimeError("landmarks is not vendored; run mina-agent admin setup")
     plan, skipped = {}, []
     for lib in libs:
         rec = g["libraries"][lib]

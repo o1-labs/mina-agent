@@ -62,7 +62,7 @@ def lsp(e):
     if p:
         gen = L.plugin_dir(e.repo) if L.has_lsp(e.repo) else None
         yield Check("lsp plugin", OK if gen else FAIL,
-                    f"{gen} (passed to sessions with --plugin-dir)" if gen else "not generated; run mina-agent init")
+                    f"{gen} (passed to sessions with --plugin-dir)" if gen else "not generated; run mina-agent admin init")
 
 
 def opam_export(e):
@@ -80,16 +80,16 @@ def opam_export(e):
 def graph(e):
     from .. import graph as G
     tool = paths.describe_dune_bin()
-    yield Check("describe-dune", OK if tool.exists() else FAIL, str(tool) if tool.exists() else "run mina-agent setup")
+    yield Check("describe-dune", OK if tool.exists() else FAIL, str(tool) if tool.exists() else "run mina-agent admin setup")
     dj = paths.derived_json()
     if dj.exists() and tool.exists() and e.usable:
         fresh = G.check(e)
-        yield Check("derived graph", OK if fresh else FAIL, str(dj) + ("" if fresh else " is stale; rerun mina-agent init"))
+        yield Check("derived graph", OK if fresh else FAIL, str(dj) + ("" if fresh else " is stale; rerun mina-agent admin init"))
     else:
-        yield Check("derived graph", FAIL, "missing; run mina-agent setup && mina-agent init")
+        yield Check("derived graph", FAIL, "missing; run mina-agent admin setup && mina-agent admin init")
     ub = paths.usages_bin()
     yield Check("usages", OK if ub.exists() else FAIL,
-                str(ub) if ub.exists() else "not built (reads .cmt typed trees for the usages tool); run mina-agent setup")
+                str(ub) if ub.exists() else "not built (reads .cmt typed trees for the usages tool); run mina-agent admin setup")
     from .. import landmarks, profile as P
     ok, detail = landmarks.status(e.repo)
     yield Check("landmarks", OK if ok else NOTE, detail)
@@ -131,7 +131,7 @@ def no_leakage(e):
 def git_hook(e):
     hook = paths.git_hook(e.repo)
     ours = hook.exists() and "mina-agent" in hook.read_text() and agent.mina_agent_bin() in hook.read_text()
-    yield Check("git pre-commit", OK if ours else FAIL, str(hook) if ours else f"{hook} missing or foreign; run mina-agent init")
+    yield Check("git pre-commit", OK if ours else FAIL, str(hook) if ours else f"{hook} missing or foreign; run mina-agent admin init")
 
 
 def linters(e):

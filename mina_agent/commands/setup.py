@@ -40,4 +40,4 @@ def setup():
         print(f"landmarks     MISSING  {ex} (mina-agent profile will retry the fetch)")
     d = graph.derive_and_write(e)
     print(f"graph: {graph.summary(d)}")
-    print("next: mina-agent init")
+    print("next: mina-agent admin init")

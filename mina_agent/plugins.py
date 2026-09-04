@@ -4,7 +4,7 @@ manifest.toml:
     [[plugins]]
     name = "adhd"
     url  = "https://github.com/UditAkhourii/adhd"
-    ref  = "16dc239"          # commit or tag; `mina-agent init` checks it out
+    ref  = "16dc239"          # commit or tag; `mina-agent admin init` checks it out
 
 `init` clones each into harness/state/plugins/<name> (gitignored) and pins
 the ref; discuss and review pass every synced plugin with --plugin-dir.
@@ -59,7 +59,7 @@ def sync(repo):
 
 def dirs(repo):
     """Synced plugin directories, for --plugin-dir. Missing ones are skipped
-    (run `mina-agent init`)."""
+    (run `mina-agent admin init`)."""
     out = []
     for p in declared():
         d = plugin_root(repo) / p["name"]
@@ -73,8 +73,8 @@ def status(repo):
     for p in declared():
         d = plugin_root(repo) / p["name"]
         if not (d / ".claude-plugin" / "plugin.json").exists():
-            yield p["name"], False, f"not synced; run mina-agent init ({p['url']} @ {p['ref']})"
+            yield p["name"], False, f"not synced; run mina-agent admin init ({p['url']} @ {p['ref']})"
             continue
         head = _head(d) or "?"
         pinned = _git(d, "rev-parse", "--short", p["ref"]).stdout.strip()
-        yield p["name"], head == pinned, f"{d} at {head}" + ("" if head == pinned else f", manifest pins {p['ref']}; run mina-agent init")
+        yield p["name"], head == pinned, f"{d} at {head}" + ("" if head == pinned else f", manifest pins {p['ref']}; run mina-agent admin init")

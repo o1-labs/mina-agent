@@ -31,7 +31,7 @@ harness already inherits it as is (`Env.activate` copies `os.environ` when
 
 - `mina-agent status` shows `mode nix (activated)` with the shell's dune and
   ocaml versions.
-- `mina-agent setup` builds describe-dune and usages with the shell's
+- `mina-agent admin setup` builds describe-dune and usages with the shell's
   ocamlfind, fetches landmarks, derives the graph.
 - `mina-agent doctor` is all ok/note; the `lsp plugin` row resolves to the
   flake's ocamllsp.

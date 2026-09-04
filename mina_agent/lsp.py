@@ -5,7 +5,7 @@ switch beside dune 3.3.1 (it accepts dune-rpc 3.5 with the old dune), so
 `opam install ocaml-lsp-server.1.15.1-4.14` there is the primary path and
 leaves opam.export a superset. Newer releases (1.16+) force dune >= 3.4; for
 one of those use a sibling switch with the same compiler, which is the
-fallback resolved below. `mina-agent init` resolves the binary and writes a
+fallback resolved below. `mina-agent admin init` resolves the binary and writes a
 plugin with its absolute path into harness/state/plugin; headless runs,
 discuss, and the ~/.claude/skills symlink all point there.
 

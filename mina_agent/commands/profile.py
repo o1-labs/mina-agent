@@ -80,7 +80,7 @@ def _examples():
     lines = ["[bold]Examples[/bold]", ""]
     for args, why in ex:
         lines += [f"  mina-agent profile {args}", f"      {why}"]
-    lines += ["", "Find a focus with [bold]mina-agent list libraries[/bold] (--filter <substring>, "
+    lines += ["", "Find a focus with [bold]mina-agent show libraries[/bold] (--filter <substring>, "
               "--inline-tests): every library with its directory, whether it has inline tests, "
               "and how many libraries depend on it."]
     return "\n".join(lines)

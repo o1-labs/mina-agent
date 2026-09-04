@@ -38,7 +38,7 @@ def _git_rev(path) -> str | None:
 def _doctor_text(bin_path) -> str:
     """`mina-agent doctor` as plain text (rich honours NO_COLOR and COLUMNS)."""
     env = {**os.environ, "NO_COLOR": "1", "COLUMNS": "140", "TERM": "dumb"}
-    r = subprocess.run([bin_path, "doctor"], capture_output=True, text=True, env=env)
+    r = subprocess.run([bin_path, "show", "doctor"], capture_output=True, text=True, env=env)
     return r.stdout + r.stderr
 
 

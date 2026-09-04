@@ -24,9 +24,28 @@ the commit (or "working tree"), and the noise stated beside it.
 samply symbol names are the linker's: `camlStaged_ledger__hash_1234`. A
 substring such as `Staged_ledger__hash` matches every instance; check the
 share is not diluted by same-named functions elsewhere (`usages` and
-`find_module` tell you). Sample share compares *fractions* of the run under
-a symbol; if the workload also changed size, wall clock and shares move
-for other reasons.
+`find_module` tell you).
+
+How the share is computed, and what can go wrong with it:
+- It is CPU-weighted and scoped to the threads that run OCaml code. A Mina
+  test process has a Rust rayon pool doing most of the raw CPU (field
+  arithmetic) and threads blocked in the kernel; neither belongs in the
+  denominator of an OCaml function's share. `ocaml_cpu_share_pct` says how
+  much of the process that scope was. This is the denominator a landmarks
+  figure has, so the two are comparable.
+- `symbol_share_pct` is inclusive (the symbol anywhere on the stack) and
+  needs complete stacks. `stack_completeness_pct` is how much of that CPU
+  reaches `caml_start_program`; below 80% the inclusive share is withheld
+  (None) with a warning. On macOS arm64 with the OCaml 4.14 switch that is
+  the normal case (no frame pointers, no compact unwind for OCaml frames):
+  stacks stop at the first OCaml frame above a C or Rust leaf.
+- `symbol_leaf_share_pct` is self time (innermost frame) and is correct
+  regardless of unwinding. Use it on the functions the change touches
+  (the serializer, the hash primitive, GC entry points) rather than on a
+  caller that does little work itself; a caller's leaf share is ~0 by
+  nature. Complete inclusive stacks need Linux perf with DWARF unwinding.
+- Sample share compares *fractions* of the run under a symbol; if the
+  workload also changed size, wall clock and shares move for other reasons.
 
 ## Choosing the workload
 

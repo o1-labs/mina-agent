@@ -238,6 +238,39 @@ class GcStats:
 
 
 @dataclass(frozen=True, slots=True)
+class SampleShares:
+    """How a samply profile scores one symbol, weighted by CPU time
+    (threadCPUDelta, so blocked threads count nothing) and restricted to the
+    threads that run OCaml code (Rust worker threads are a separate
+    denominator). Inclusive counts CPU with the symbol anywhere on the stack
+    and needs complete stacks; leaf counts CPU whose innermost frame is the
+    symbol (self time) and does not. completeness is the share of that CPU
+    whose stack reaches caml_start_program, the root of every OCaml stack."""
+    total: float                        # CPU of the OCaml threads
+    inclusive: float
+    leaf: float
+    root: float
+    samples: int = 0                    # raw sample count behind `total`
+    ocaml_threads: int = 0
+    ocaml_cpu_share_pct: float = 100.0  # OCaml threads' share of the whole process's CPU
+
+    @property
+    def completeness_pct(self) -> float:
+        return round(100 * self.root / self.total, 1) if self.total else 0.0
+
+    @property
+    def inclusive_pct(self) -> float:
+        return round(100 * self.inclusive / self.total, 1) if self.total else 0.0
+
+    @property
+    def leaf_pct(self) -> float:
+        return round(100 * self.leaf / self.total, 1) if self.total else 0.0
+
+
+STACKS_COMPLETE_PCT = 80.0      # below this, inclusive shares are not reported
+
+
+@dataclass(frozen=True, slots=True)
 class PerfRun:
     """One ref measured on one workload."""
     ref: str
@@ -247,10 +280,14 @@ class PerfRun:
     max_rss_bytes: int | None           # peak resident set, largest over repeats
     gc: GcStats | None
     samples_total: int | None           # samply, when a symbol was asked for
-    samples_symbol: int | None
-    symbol_share_pct: float | None
+    samples_symbol: int | None          # inclusive hits
+    symbol_share_pct: float | None      # inclusive share; None when the stacks are incomplete
     profile: str | None                 # samply profile path
     exit_codes: tuple[int, ...]
+    samples_symbol_leaf: int | None = None
+    symbol_leaf_share_pct: float | None = None
+    stack_completeness_pct: float | None = None
+    warnings: tuple[str, ...] = ()
 
     @property
     def wall_median_s(self) -> float | None:

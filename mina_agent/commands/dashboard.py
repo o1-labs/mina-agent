@@ -15,7 +15,7 @@ def dashboard(port: int = typer.Option(8765, "--port", "-p", help="Starting port
     repo = paths.repo_root()
     srv, p = D.serve(repo, port)
     url = f"http://127.0.0.1:{p}/"
-    typer.echo(f"mina-agent dashboard: {url}  (logs: {paths.logs_dir(repo)})", err=True)
+    typer.echo(f"mina-agent dashboard: {url}  (logs: {paths.logs_dir()})", err=True)
     if open_:
         webbrowser.open(url)
     try:

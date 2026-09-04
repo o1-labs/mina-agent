@@ -15,6 +15,6 @@ def derive(check: bool = typer.Option(False, "--check", help="Exit 1 if derived.
         print("derived.json is current" if ok else "derived.json is stale; rerun mina-agent derive")
         raise typer.Exit(0 if ok else 1)
     d = graph.derive_and_write(e)
-    print(f"wrote {paths.derived_json(e.repo)}: {graph.summary(d)}")
+    print(f"wrote {paths.derived_json()}: {graph.summary(d)}")
     for n in d["notes"]:
         print("  note:", n)

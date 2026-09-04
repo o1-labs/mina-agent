@@ -53,7 +53,7 @@ def resolve(env):
 
 def write_plugin(repo, ocamllsp_path):
     """Generate harness/state/plugin from data/plugin with the resolved binary."""
-    out = paths.generated_plugin(repo)
+    out = paths.generated_plugin()
     (out / ".claude-plugin").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(paths.PLUGIN / ".claude-plugin" / "plugin.json", out / ".claude-plugin" / "plugin.json")
     with open(paths.PLUGIN / ".lsp.json") as fh:
@@ -67,5 +67,5 @@ def write_plugin(repo, ocamllsp_path):
 
 def plugin_dir(repo):
     """The generated plugin if init produced one, else None."""
-    out = paths.generated_plugin(repo)
+    out = paths.generated_plugin()
     return out if (out / ".lsp.json").exists() else None

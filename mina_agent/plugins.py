@@ -24,7 +24,7 @@ def declared():
 
 
 def plugin_root(repo):
-    p = paths.state_dir(repo) / "plugins"
+    p = paths.state_dir() / "plugins"
     p.mkdir(parents=True, exist_ok=True)
     return p
 

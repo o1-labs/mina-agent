@@ -79,15 +79,15 @@ def opam_export(e):
 
 def graph(e):
     from .. import graph as G
-    tool = paths.describe_dune_bin(e.repo)
+    tool = paths.describe_dune_bin()
     yield Check("describe-dune", OK if tool.exists() else FAIL, str(tool) if tool.exists() else "run mina-agent setup")
-    dj = paths.derived_json(e.repo)
+    dj = paths.derived_json()
     if dj.exists() and tool.exists() and e.usable:
         fresh = G.check(e)
         yield Check("derived graph", OK if fresh else FAIL, str(dj) + ("" if fresh else " is stale; rerun mina-agent init"))
     else:
         yield Check("derived graph", FAIL, "missing; run mina-agent setup && mina-agent init")
-    ub = paths.usages_bin(e.repo)
+    ub = paths.usages_bin()
     yield Check("usages", OK if ub.exists() else FAIL,
                 str(ub) if ub.exists() else "not built (reads .cmt typed trees for the usages tool); run mina-agent setup")
     from .. import landmarks, profile as P
@@ -147,13 +147,13 @@ def github(e):
     """fix-bug reads issues with gh, authenticated however the session env
     provides it: `gh auth login` (keyring) or GH_TOKEN from harness/.envrc."""
     from .. import env as envmod
-    senv = e.session_env() if e.usable else {**os.environ, **envmod.dotenv(e.repo)}
+    senv = e.session_env() if e.usable else {**os.environ, **envmod.dotenv()}
     gh = shutil.which("gh", path=senv.get("PATH"))
     if not gh:
         yield Check("gh", NOTE, "not installed (brew install gh); fix-bug needs it")
         return
     r = subprocess.run([gh, "auth", "status"], capture_output=True, text=True, env=senv)
-    how = "GH_TOKEN from harness/.envrc" if "GH_TOKEN" in envmod.dotenv(e.repo) else "gh auth login"
+    how = "GH_TOKEN from harness/.envrc" if "GH_TOKEN" in envmod.dotenv() else "gh auth login"
     yield Check("gh", OK if r.returncode == 0 else FAIL,
                 f"authenticated ({how})" if r.returncode == 0
                 else "not authenticated: run `gh auth login`, or put GH_TOKEN in harness/.envrc")
@@ -166,7 +166,7 @@ def external_plugins(e):
 
 
 def notes(e):
-    p = paths.notes_file(e.repo)
+    p = paths.notes_file()
     yield Check("notes", NOTE, str(p) if p.exists() else "none yet (created by discuss)")
 
 

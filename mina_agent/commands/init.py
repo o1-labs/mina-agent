@@ -20,6 +20,24 @@ def install_git_hook(repo):
     return hook, "installed"
 
 
+def exclude_harness(repo):
+    """Add the harness checkout to the Mina repo's .git/info/exclude, so an
+    unshipped clone inside the tree never shows as untracked. Idempotent."""
+    import subprocess
+    rel = paths.harness_relpath(repo)
+    if not rel or rel == ".":
+        return None, "harness is not inside the repo"
+    r = subprocess.run(["git", "rev-parse", "--git-path", "info/exclude"], cwd=repo, capture_output=True, text=True, check=True)
+    exclude = paths.Path(repo) / r.stdout.strip()
+    line = f"/{rel}/"
+    have = exclude.read_text().splitlines() if exclude.exists() else []
+    if line in have:
+        return exclude, "already excluded"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.write_text("\n".join([*have, line]) + "\n")
+    return exclude, f"added {line}"
+
+
 def init():
     """Prepare this checkout: graph, LSP plugin, declared plugins, git pre-commit hook.
 
@@ -29,11 +47,13 @@ def init():
     """
     from .. import env as envmod, graph
     e = envmod.require()
-    paths.state_dir(e.repo)
+    paths.state_dir()
     d = graph.derive_and_write(e)
     print(f"graph: {graph.summary(d)}")
     hook, how = install_git_hook(e.repo)
     print(f"git pre-commit: {hook} ({how})")
+    exclude, how = exclude_harness(e.repo)
+    print(f"git exclude: {exclude or ''} ({how})")
     from .. import lsp
     path, source = lsp.resolve(e)
     if path:

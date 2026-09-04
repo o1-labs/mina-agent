@@ -2,18 +2,19 @@
 import os
 from pathlib import Path
 
-from mina_agent import agent, env as envmod, phases
+from mina_agent import agent, env as envmod, paths, phases
 
 
 def test_dotenv_reads_exports_and_ignores_unchanged(tmp_path, monkeypatch):
-    (tmp_path / "harness").mkdir()
-    (tmp_path / "harness" / ".envrc").write_text('export GH_TOKEN="abc 123"\nexport HOME="$HOME"\n# comment\n')
-    d = envmod.dotenv(str(tmp_path))
+    monkeypatch.setattr(paths, "HARNESS", tmp_path)
+    (tmp_path / ".envrc").write_text('export GH_TOKEN="abc 123"\nexport HOME="$HOME"\n# comment\n')
+    d = envmod.dotenv()
     assert d["GH_TOKEN"] == "abc 123" and "HOME" not in d
 
 
-def test_dotenv_absent_is_empty(tmp_path):
-    assert envmod.dotenv(str(tmp_path)) == {}
+def test_dotenv_absent_is_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "HARNESS", tmp_path)
+    assert envmod.dotenv() == {}
 
 
 def test_phase_env_requirement_parses(tmp_path):

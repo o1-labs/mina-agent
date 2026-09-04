@@ -30,14 +30,14 @@ from .model import ProfileEntry, RestoreReport, Session, Workload, WorkloadCandi
 DUNE_SUBCOMMANDS = ("build", "exec", "runtest", "test")
 
 
-def state_dir(repo):
-    p = paths.state_dir(repo) / "profile"
+def state_dir():
+    p = paths.state_dir() / "profile"
     p.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def session_file(repo):
-    return state_dir(repo) / "session.json"
+    return state_dir() / "session.json"
 
 
 def load(repo) -> Session | None:
@@ -175,7 +175,7 @@ def session_block(repo, g, focus, scope, libs) -> str:
              f"{len(libs)} instrumented librar{plural}{names}.",
              "Workload candidates (cheapest and most direct first):"]
     lines += [f"  profile_run(\"{w.spec}\")  [{w.cost}]  {w.reason}" for w in workload_candidates(g, focus)]
-    lines += ["", f"Profiles land in {state_dir(repo)}; profile ids are their file stems."]
+    lines += ["", f"Profiles land in {state_dir()}; profile ids are their file stems."]
     return "\n".join(lines)
 
 
@@ -319,10 +319,10 @@ def next_profile_path(repo, spec):
     """Next free NNN-<spec>.json in the profile dir, numbered after whatever
     is on disk (a run that wrote a profile but was never recorded still
     holds its number)."""
-    taken = [int(m.group(1)) for p in state_dir(repo).glob("*.json")
+    taken = [int(m.group(1)) for p in state_dir().glob("*.json")
              if (m := re.match(r"(\d{3})-", p.name))]
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", spec)
-    return state_dir(repo) / f"{max(taken, default=0) + 1:03d}-{safe}.json"
+    return state_dir() / f"{max(taken, default=0) + 1:03d}-{safe}.json"
 
 
 def record_profile(repo, entry: ProfileEntry):

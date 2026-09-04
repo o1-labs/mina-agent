@@ -5,3 +5,5 @@ state/
 __pycache__/
 *.egg-info/
 .venv/
+# secrets sourced into harness sessions (see .envrc.example)
+.envrc

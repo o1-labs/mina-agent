@@ -147,7 +147,7 @@ def _lint_events(path):
 
 
 def events(repo, limit=500):
-    d = paths.logs_dir(repo)
+    d = paths.logs_dir()
     out = []
     for p in d.glob("*.jsonl"):
         out.extend(_lint_events(p) if p.name == "lint.jsonl" else _run_events(p))
@@ -156,7 +156,7 @@ def events(repo, limit=500):
 
 
 def _digest(repo):
-    d = paths.logs_dir(repo)
+    d = paths.logs_dir()
     return tuple(sorted((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in d.glob("*.jsonl")))
 
 

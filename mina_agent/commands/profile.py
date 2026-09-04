@@ -144,7 +144,7 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     lib = P.resolve_focus(g, focus)
     libs = P.scope_libraries(g, lib, scope)
     from .discuss import RULES as DISCUSS_RULES
-    notes = paths.notes_file(e.repo)
+    notes = paths.notes_file()
     first_message = "\n".join([DISCUSS_RULES.format(notes=str(notes)), RULES,
                                P.session_block(e.repo, g, lib, scope, libs)])
     if dry_run:
@@ -166,5 +166,5 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     finally:
         rep = P.restore(e.repo)
         typer.echo(f"session ended; restored {len(rep.restored)} dune file(s), "
-                   f"{len(rep.profiles)} profile(s) kept in {P.state_dir(e.repo)}", err=True)
+                   f"{len(rep.profiles)} profile(s) kept in {P.state_dir()}", err=True)
         _report(rep, lambda m: typer.echo(m, err=True))

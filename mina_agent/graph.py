@@ -36,7 +36,7 @@ PPX_PREFIXES = ("ppx_", "bisect_ppx")
 
 
 def tool_path(env):
-    return str(paths.describe_dune_bin(env.repo))
+    return str(paths.describe_dune_bin())
 
 
 def build_tool(env):
@@ -249,14 +249,14 @@ def write_json_atomic(path, data):
 def derive_and_write(env):
     """Derive and write harness/state/derived.json; returns the data."""
     d = derive(env)
-    write_json_atomic(paths.derived_json(env.repo), d)
+    write_json_atomic(paths.derived_json(), d)
     return d
 
 
 def load(repo):
     """derived.json as written, or None when absent or unreadable."""
     try:
-        with open(paths.derived_json(repo)) as fh:
+        with open(paths.derived_json()) as fh:
             return json.load(fh)
     except (OSError, ValueError):
         return None
@@ -272,7 +272,7 @@ def load_or_derive(env):
 
 def check(env):
     """True when the on-disk derived.json matches a fresh derivation."""
-    out = paths.derived_json(env.repo)
+    out = paths.derived_json()
     if not out.exists():
         return False
     with open(out) as fh:

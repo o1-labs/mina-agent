@@ -56,7 +56,7 @@ def discuss(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     from .. import env as envmod, graph, tools
     e = envmod.require()
     graph.load_or_derive(e)
-    notes = paths.notes_file(e.repo)
+    notes = paths.notes_file()
     if not notes.exists():
         notes.write_text(NOTES_TEMPLATE)
 

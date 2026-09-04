@@ -190,7 +190,7 @@ def build_options(phase: Phase, env, *, max_turns=None, max_budget_usd=None, mod
     # ToolSearch and the model spends its first turn loading them.
     # "Bash(git *)" allows a command pattern; the tool it names is Bash.
     builtin = list(dict.fromkeys(t.split("(")[0] for t in phase.allowed_tools if not t.startswith("mcp__")))
-    settings_file = paths.state_dir(env.repo) / "headless-settings.json"
+    settings_file = paths.state_dir() / "headless-settings.json"
     settings_file.write_text(json.dumps(headless_settings(), indent=1))
     return ClaudeAgentOptions(
         tools=builtin,

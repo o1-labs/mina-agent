@@ -22,7 +22,7 @@ PACKAGES = "compiler-libs.common,unix,yojson"
 
 
 def build_tool(env):
-    out = str(paths.usages_bin(env.repo))
+    out = str(paths.usages_bin())
     argv = ["ocamlfind", "ocamlopt", "-package", PACKAGES, "-linkpkg", str(SRC), "-o", out]
     r = env.run(argv, capture=True, cwd=os.path.dirname(out))
     # ocamlopt leaves .cm*/.o beside the source; keep data/tools clean
@@ -96,7 +96,7 @@ def cmt_files(repo, g, units):
 
 
 def run(env, def_file, line, col, cmts, timeout_s):
-    tool = paths.usages_bin(env.repo)
+    tool = paths.usages_bin()
     if not tool.exists():
         build_tool(env)
     r = subprocess.run([str(tool), def_file, str(line), str(col)], input="\n".join(cmts) + "\n",

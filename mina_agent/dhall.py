@@ -42,7 +42,7 @@ def pinned_version(repo):
 
 
 def binary(repo):
-    return paths.state_dir(repo) / "bin" / "dhall"
+    return paths.state_dir() / "bin" / "dhall"
 
 
 def version_of(path):

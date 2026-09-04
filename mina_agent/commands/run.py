@@ -21,7 +21,7 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model,
     senv = e.session_env()
     if missing := [v for v in phase.env if v not in senv]:
         typer.echo(f"{phase.command_name} needs {', '.join(missing)}: export it in the shell or in "
-                   f"{envmod.dotenv_path(e.repo)} (see harness/.envrc.example)", err=True)
+                   f"{envmod.dotenv_path()} (see harness/.envrc.example)", err=True)
         raise typer.Exit(2)
     if missing := [x for x in phase.needs if not shutil.which(x, path=senv.get("PATH"))]:
         typer.echo(f"{phase.command_name} needs {', '.join(missing)} on PATH", err=True)
@@ -47,7 +47,7 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model,
         print("\n[dry-run] system prompt addition:\n" + agent.system_addition())
         return
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    log_path = paths.logs_dir(e.repo) / f"{stamp}-{phase.name}.jsonl"
+    log_path = paths.logs_dir() / f"{stamp}-{phase.name}.jsonl"
     print(f"phase {phase.name}  args {args}  log {os.path.relpath(log_path, e.repo)}\n")
     if session:
         try:

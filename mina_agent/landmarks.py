@@ -38,7 +38,7 @@ STANZA = " (instrumentation\n  (backend landmarks --auto))"
 
 
 def vendor_dir(repo):
-    return paths.state_dir(repo) / "landmarks"
+    return paths.state_dir() / "landmarks"
 
 
 def present(repo):

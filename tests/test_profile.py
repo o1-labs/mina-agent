@@ -2,7 +2,7 @@
 import subprocess
 from pathlib import Path
 
-from mina_agent import landmarks, profile as P
+from mina_agent import landmarks, paths, profile as P
 
 DUNE = '(library\n (name x)\n (libraries core))\n\n(rule (targets y) (action (echo "; not a comment")))\n'
 
@@ -20,6 +20,7 @@ def _repo(tmp_path, monkeypatch):
     _git(repo, "add", ".")
     _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "root")
     monkeypatch.setattr(landmarks, "present", lambda repo: True)
+    monkeypatch.setattr(paths, "HARNESS", tmp_path / "harness")     # generated state lives under the harness checkout
     return str(repo), {"libraries": {"x": {"dir": "src/x", "deps": []}}}
 
 
@@ -70,7 +71,8 @@ def test_start_refuses_dirty_dune_file(tmp_path, monkeypatch):
 
 def test_next_profile_path_numbers_after_files_on_disk(tmp_path, monkeypatch):
     repo, _ = _repo(tmp_path, monkeypatch)
-    d = P.state_dir(repo)
+    d = P.state_dir()
+    assert d == tmp_path / "harness" / "state" / "profile"
     (d / "002-inline_x.json").write_text("{}")
     assert P.next_profile_path(repo, "inline:x").name == "003-inline_x.json"
     assert P.next_profile_path(repo, "exe:a/b.exe").name == "003-exe_a_b.exe.json"

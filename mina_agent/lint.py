@@ -24,6 +24,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import paths
 from .model import Status
 
 # src/app/reformat/reformat.ml dirs_trustlist, what `make check-format` skips
@@ -67,8 +68,10 @@ def staged_tree(repo):
         yield tmp
 
 
-def _skip_format(path):
-    return any(path.startswith(s) or ("/" + s) in ("/" + path) for s in FORMAT_SKIP)
+def _skip_format(path, repo=None):
+    rel = paths.harness_relpath(repo) if repo else None
+    skips = FORMAT_SKIP + ((rel + "/",) if rel and rel != "." else ())
+    return any(path.startswith(s) or ("/" + s) in ("/" + path) for s in skips)
 
 
 # --------------------------------------------------------------------------
@@ -80,7 +83,7 @@ def check_ocamlformat(repo, tree, env, files, staged, fix=False):
     outside the reformat tool's skip list. Runs in `tree`, so in staged mode
     a file formatted on disk but staged unformatted still fails; --fix
     rewrites the working tree."""
-    targets = [f for f in files if f.endswith((".ml", ".mli")) and not _skip_format(f)]
+    targets = [f for f in files if f.endswith((".ml", ".mli")) and not _skip_format(f, repo)]
     if not targets:
         return Result("ocamlformat", "Lint/OCaml", Status.OK, "no OCaml files in scope")
     aenv = env.activate()
@@ -261,7 +264,7 @@ def run(env, *, scope="staged", fix=False, caller="cli"):
 
 def log_path(repo):
     from . import paths
-    return paths.logs_dir(repo) / "lint.jsonl"
+    return paths.logs_dir() / "lint.jsonl"
 
 
 def record(repo, scope, caller, files, results):

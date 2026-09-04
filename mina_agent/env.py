@@ -117,7 +117,7 @@ class Env:
     def session_env(self) -> dict[str, str]:
         """The activated env plus what harness/.envrc exports (tokens the
         sessions need, never committed): what every Claude session runs with."""
-        return {**self.activate(), **dotenv(self.repo)}
+        return {**self.activate(), **dotenv()}
 
     def summary(self) -> str:
         """One line: mode, activation, dune and OCaml versions. The only
@@ -265,7 +265,7 @@ def _dune_lock(repo):
     """fcntl lock held for the duration of a dune invocation."""
     import fcntl
     from . import paths
-    lock_path = paths.state_dir(repo) / "dune.lock"
+    lock_path = paths.state_dir() / "dune.lock"
     with open(lock_path, "w") as fh:
         t0 = time.time()
         fcntl.flock(fh, fcntl.LOCK_EX)
@@ -296,19 +296,20 @@ NIX_UNSUPPORTED = ("nix mode is not supported yet: the harness refuses to run in
                    "until the items in harness/NIX.md are done (leave the shell and use the repo's opam switch)")
 
 
-def dotenv_path(repo) -> str:
-    return os.path.join(repo, "harness", ".envrc")
+def dotenv_path() -> str:
+    from . import paths
+    return str(paths.dotenv())
 
 
-def dotenv(repo) -> dict[str, str]:
-    """Variables harness/.envrc exports, sourced by bash so any direnv-style
+def dotenv() -> dict[str, str]:
+    """Variables <harness>/.envrc exports, sourced by bash so any direnv-style
     file works. Only variables it sets or changes are returned; empty when
     the file is absent."""
-    p = dotenv_path(repo)
+    p = dotenv_path()
     if not os.path.exists(p):
         return {}
     r = subprocess.run(["bash", "-c", 'set -a; source "$1" >/dev/null 2>&1; env -0', "_", p],
-                       capture_output=True, cwd=repo)
+                       capture_output=True, cwd=os.path.dirname(p))
     after = dict(kv.split("=", 1) for kv in r.stdout.decode(errors="replace").split("\0") if "=" in kv)
     return {k: v for k, v in after.items() if os.environ.get(k) != v}
 

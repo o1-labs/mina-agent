@@ -58,4 +58,4 @@ def clean(yes: bool = typer.Option(False, "--yes", "-y", help="Remove without as
         print("kept")
         raise typer.Exit(1)
     shutil.rmtree(state)
-    print("removed; mina-agent setup && mina-agent init regenerates it")
+    print("removed. To regenerate:\n\n    mina-agent setup && mina-agent init\n")

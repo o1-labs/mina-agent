@@ -32,3 +32,8 @@ a `dune build -w` you run yourself; on the pinned dune (3.3.1) two dune
 processes on one `_build` can corrupt each other's temporaries, and the
 native fix (`dune rpc build` into the watcher) is experimental there. Stop
 the watcher while the agent builds, until the dune pin moves.
+
+Development: `uv run pytest` runs the pure tests under `tests/` (no
+toolchain needed); `uv run pyright` type-checks the package. Shared record
+types live in `mina_agent/model.py`; modules pass those, and `to_json()`
+serializes at the MCP and log edges.

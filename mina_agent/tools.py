@@ -784,8 +784,7 @@ def facts() -> list:
     SessionStart hook and run.py's --append-system-prompt. Statements, never
     instructions (hooks docs: prompt-injection note)."""
     env, m = ENV, MANIFEST_DATA
-    out = [f"mina-harness environment: mode={env.mode} activated={env.activated} "
-           f"dune={env.dune_version} ocaml={env.ocaml}."]
+    out = [f"mina-harness environment: {env.summary()}."]
     out += [f"warning: {w}" for w in env.warnings]
     try:
         g = GRAPH.get()

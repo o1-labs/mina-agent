@@ -37,10 +37,7 @@ def lint(all_: bool = typer.Option(False, "--all", help="Whole tree instead of t
     this machine lacks say so instead of passing silently.
     """
     from .. import env as envmod
-    e = envmod.detect()
-    if not e.usable:
-        typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
-        raise typer.Exit(3)
+    e = envmod.require()
     if history:
         for rec in L.history(e.repo, history):
             fails = [r["name"] for r in rec["results"] if r["status"] == "fail"]

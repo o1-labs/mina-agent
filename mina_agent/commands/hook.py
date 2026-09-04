@@ -68,9 +68,12 @@ def pre_commit():
     from .. import env as envmod, lint as L
     from ..model import Status
     from .lint import render
-    e = envmod.detect()
-    if not e.usable:
-        sys.stderr.write("mina-agent pre-commit: no usable toolchain, skipping lint\n")
+    try:
+        e = envmod.require()
+    except envmod.NoToolchain as ex:
+        # Deliberate: a commit from a shell without the switch is not blocked,
+        # the lint gate is skipped loudly and CI still runs it.
+        sys.stderr.write(f"mina-agent pre-commit: {ex}; skipping lint\n")
         return
     files, results = L.run(e, scope="staged", caller="pre-commit")
     bad = [r for r in results if r.status is Status.FAIL]
@@ -89,7 +92,7 @@ def session_start():
     from .. import env as envmod, tools, banner
     _payload()
     e = envmod.detect()
-    out = {"systemMessage": banner.render(e.to_dict()),
+    out = {"systemMessage": banner.render(e),
            "hookSpecificOutput": {"hookEventName": "SessionStart",
                                   "additionalContext": "\n".join(tools.facts())}}
     print(json.dumps(out))

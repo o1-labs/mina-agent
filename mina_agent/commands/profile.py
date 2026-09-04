@@ -136,8 +136,7 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
             print(f"  source edit left in place (yours to keep or revert): {f}")
         return
     if not e.usable:
-        typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
-        raise typer.Exit(3)
+        raise envmod.NoToolchain(e)
     if not focus:
         typer.echo("--focus is required (a library name or a path inside one)", err=True)
         raise typer.Exit(2)

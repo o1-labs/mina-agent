@@ -36,15 +36,10 @@ def _want_unicode():
     return "utf" in enc
 
 
-def render(status=None):
+def render(env=None):
     art = UNICODE if _want_unicode() else ASCII
     lines = [art.rstrip("\n")]
-    if status:
-        mode = status.get("mode", "?")
-        act = "activated" if status.get("activated") else "not activated"
-        dune = status.get("dune_version") or "?"
-        ocaml = status.get("ocaml") or "?"
-        lines.append(f"   mode {mode} ({act})   dune {dune}   ocaml {ocaml}")
-        for w in status.get("warnings", []):
-            lines.append(f"   ! {w}")
+    if env:
+        lines.append(f"   {env.summary()}")
+        lines += [f"   ! {w}" for w in env.warnings]
     return "\n".join(lines) + "\n"

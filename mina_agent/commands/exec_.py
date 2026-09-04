@@ -14,8 +14,5 @@ def exec_(ctx: typer.Context):
     if not args:
         typer.echo("usage: mina-agent exec -- <cmd...>", err=True)
         raise typer.Exit(2)
-    e = envmod.detect()
-    if not e.usable:
-        typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
-        raise typer.Exit(3)
+    e = envmod.require()
     raise typer.Exit(e.run(args, lock=os.path.basename(args[0]) == "dune").returncode)

@@ -112,6 +112,12 @@ class Env:
     def usable(self) -> bool:
         return self.mode is not Mode.NONE
 
+    def summary(self) -> str:
+        """One line: mode, activation, dune and OCaml versions. The only
+        place this is formatted."""
+        act = "activated" if self.activated else "not activated"
+        return f"mode {self.mode} ({act})   dune {self.dune_version or '?'}   ocaml {self.ocaml or '?'}"
+
     # -- activation ---------------------------------------------------------
 
     def activate(self):
@@ -278,6 +284,24 @@ def _log(msg):
 
 
 # -- detection ---------------------------------------------------------------
+
+class NoToolchain(RuntimeError):
+    """Raised by require() when no usable toolchain was detected. The CLI
+    maps it to exit 3; the reasons are the message."""
+
+    def __init__(self, env: "Env"):
+        super().__init__("no usable toolchain: " + "; ".join(env.reasons))
+        self.env = env
+
+
+def require() -> Env:
+    """detect(), refusing with NoToolchain when the toolchain is unusable.
+    Commands that cannot do anything without dune call this instead of detect()."""
+    e = detect()
+    if not e.usable:
+        raise NoToolchain(e)
+    return e
+
 
 def detect() -> Env:
     repo = _repo_root()

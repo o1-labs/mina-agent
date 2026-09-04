@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from . import __version__
+from .env import NoToolchain
 
 HIDDEN = {"serve", "hook", "exec", "derive", "list"}
 
@@ -39,7 +40,19 @@ class _Group(TyperGroup):
                                           border_style="dim", padding=(1, 2)))
 
 
-app = typer.Typer(
+class _App(typer.Typer):
+    """typer app that maps NoToolchain (from env.require) to exit 3 with the
+    reasons on stderr, so no command carries that prologue itself."""
+
+    def __call__(self, *args, **kwargs):
+        try:
+            return super().__call__(*args, **kwargs)
+        except NoToolchain as ex:
+            sys.stderr.write(f"mina-agent: {ex}\n")
+            raise SystemExit(3)
+
+
+app = _App(
     cls=_Group,
     help="Structural agent harness for the Mina monorepo.",
     no_args_is_help=True,

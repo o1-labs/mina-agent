@@ -6,10 +6,7 @@ def derive(check: bool = typer.Option(False, "--check", help="Exit 1 if derived.
            build: bool = typer.Option(False, "--build", help="(Re)compile describe-dune only.")):
     """Write harness/state/derived.json from the dune files via describe-dune."""
     from .. import env as envmod, graph, paths
-    e = envmod.detect()
-    if not e.usable:
-        typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
-        raise typer.Exit(3)
+    e = envmod.require()
     if build:
         print(graph.build_tool(e))
         return

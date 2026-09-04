@@ -28,10 +28,7 @@ def init():
     Safe to rerun.
     """
     from .. import env as envmod, graph
-    e = envmod.detect()
-    if not e.usable:
-        typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
-        raise typer.Exit(3)
+    e = envmod.require()
     paths.state_dir(e.repo)
     d = graph.derive_and_write(e)
     print(f"graph: {graph.summary(d)}")

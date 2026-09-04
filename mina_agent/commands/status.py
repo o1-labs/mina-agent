@@ -9,12 +9,10 @@ def status(as_json: bool = typer.Option(False, "--json", help="Print the full JS
     if as_json:
         print(e.to_json())
         return
-    d = e.to_dict()
-    print(f"mode {d['mode']} ({'activated' if d['activated'] else 'not activated'})   "
-          f"dune {d['dune_version']}   ocaml {d['ocaml']}")
-    print(f"repo {d['repo']}")
-    for r in d["reasons"]:
+    print(e.summary())
+    print(f"repo {e.repo}")
+    for r in e.reasons:
         print(f"  {r}")
-    for w in d["warnings"]:
+    for w in e.warnings:
         print(f"  ! {w}")
     print(f"_build: exists={e.build_dir.exists} built_by={e.build_dir.built_by}")

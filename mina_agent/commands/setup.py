@@ -15,12 +15,11 @@ def setup():
     """
     from .. import env as envmod, graph
     e = envmod.detect()
-    print(f"toolchain: mode={e.mode} activated={e.activated} dune={e.dune_version} ocaml={e.ocaml}")
+    print(f"toolchain: {e.summary()}")
     for w in e.warnings:
         print(f"  warning: {w}")
     if not e.usable:
-        typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
-        raise typer.Exit(3)
+        raise envmod.NoToolchain(e)
     aenv = e.activate()
     for name, why in (("ocamlmerlin", "type_at / definition tools"),
                       ("claude", "headless phases and discuss")):

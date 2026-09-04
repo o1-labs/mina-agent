@@ -15,10 +15,7 @@ from ..model import Phase
 
 def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model):
     from .. import env as envmod, graph, profile as P
-    e = envmod.detect()
-    if not e.usable:
-        typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
-        raise typer.Exit(3)
+    e = envmod.require()
     g = graph.load_or_derive(e)
     prompt = phases.render(phase, args)
     session = None

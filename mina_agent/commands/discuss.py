@@ -54,17 +54,14 @@ def discuss(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     rules apply structurally. Conclusions land in harness/state/NOTES.md.
     """
     from .. import env as envmod, graph, tools
-    e = envmod.detect()
-    if not e.usable:
-        typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
-        raise typer.Exit(3)
+    e = envmod.require()
     graph.load_or_derive(e)
     notes = paths.notes_file(e.repo)
     if not notes.exists():
         notes.write_text(NOTES_TEMPLATE)
 
     orient = [RULES.format(notes=str(notes)), "## Current state", ""]
-    orient.append(f"Environment: mode={e.mode} dune={e.dune_version} ocaml={e.ocaml}.")
+    orient.append(f"Environment: {e.summary()}.")
     if focus:
         try:
             u = tools.library_of(focus)

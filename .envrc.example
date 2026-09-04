@@ -1,0 +1,4 @@
+# Secrets the harness sessions need. Copy to harness/.envrc (gitignored);
+# mina-agent sources it for every session it starts, so nothing here is
+# exported into your shell unless you also `direnv allow`.
+export GH_TOKEN=ghp_...      # read-only issues scope is enough for fix-bug

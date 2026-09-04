@@ -17,6 +17,11 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model,
     from .. import env as envmod, graph, profile as P
     from .profile import _report
     e = envmod.require()
+    missing = [v for v in phase.env if v not in e.session_env()]
+    if missing:
+        typer.echo(f"{phase.command_name} needs {', '.join(missing)}: export it in the shell or in "
+                   f"{envmod.dotenv_path(e.repo)} (see harness/.envrc.example)", err=True)
+        raise typer.Exit(2)
     g = graph.load_or_derive(e)
     prompt = phases.render(phase, args)
     session = None

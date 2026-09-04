@@ -125,6 +125,13 @@ def mcp_config():
         "type": "stdio", "command": mina_agent_bin(), "args": ["serve"]}}}
 
 
+def headless_settings():
+    """The template without its hooks: headless runs get hooks in-process via
+    sdk_hooks(), so the file passed as ClaudeAgentOptions.settings carries
+    only the permission rules and flags (includeCoAuthoredBy)."""
+    return {k: v for k, v in _template().items() if k != "hooks"}
+
+
 def session_settings():
     """The settings an interactive harness session runs with, passed via
     `claude --settings` so nothing is written into the repo's .claude/.
@@ -181,9 +188,13 @@ def build_options(phase: Phase, env, *, max_turns=None, max_budget_usd=None, mod
     # The base built-in set is exactly what the phase allows. With the full
     # Claude Code inventory (45 tools) the CLI defers the MCP tools behind
     # ToolSearch and the model spends its first turn loading them.
-    builtin = [t for t in phase.allowed_tools if not t.startswith("mcp__")]
+    # "Bash(git *)" allows a command pattern; the tool it names is Bash.
+    builtin = list(dict.fromkeys(t.split("(")[0] for t in phase.allowed_tools if not t.startswith("mcp__")))
+    settings_file = paths.state_dir(env.repo) / "headless-settings.json"
+    settings_file.write_text(json.dumps(headless_settings(), indent=1))
     return ClaudeAgentOptions(
         tools=builtin,
+        settings=str(settings_file),
         system_prompt={"type": "preset", "preset": "claude_code", "append": system_addition()},
         mcp_servers=cast(Any, mcp_config()["mcpServers"]),
         strict_mcp_config=True,
@@ -194,7 +205,7 @@ def build_options(phase: Phase, env, *, max_turns=None, max_budget_usd=None, mod
         max_budget_usd=max_budget_usd or phase.max_budget_usd,
         model=model,
         cwd=env.repo,
-        env=env.activate(),
+        env=env.session_env(),
         setting_sources=["project"],
         plugins=([{"type": "local", "path": str(lsp.plugin_dir(env.repo))}]
                  if lsp.plugin_dir(env.repo) else []),
@@ -208,7 +219,7 @@ STDERR = []
 
 
 def options_summary(o):
-    d = {k: getattr(o, k) for k in ("allowed_tools", "disallowed_tools", "permission_mode",
+    d = {k: getattr(o, k) for k in ("tools", "allowed_tools", "disallowed_tools", "permission_mode",
                                     "max_turns", "max_budget_usd", "model", "cwd",
                                     "setting_sources", "strict_mcp_config")}
     d["mcp_servers"] = {k: v["command"] + " " + " ".join(v["args"]) for k, v in o.mcp_servers.items()}
@@ -268,4 +279,4 @@ def interactive_argv(first_message, repo, extra_disallowed=()):
 
 def run_interactive(first_message, env, extra_disallowed=()):
     argv = interactive_argv(first_message, env.repo, extra_disallowed)
-    return subprocess.run(argv, cwd=env.repo, env=env.activate()).returncode
+    return subprocess.run(argv, cwd=env.repo, env=env.session_env()).returncode

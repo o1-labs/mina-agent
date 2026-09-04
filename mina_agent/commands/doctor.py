@@ -142,6 +142,22 @@ def linters(e):
     yield Check("dhall", OK if ok else NOTE, detail)
 
 
+def github(e):
+    """fix-bug reads issues with gh; the token lives in harness/.envrc."""
+    from .. import env as envmod
+    tok = envmod.dotenv(e.repo).get("GH_TOKEN") or os.environ.get("GH_TOKEN")
+    if not tok:
+        yield Check("github token", NOTE, f"GH_TOKEN not set; fix-bug needs it (export it in {envmod.dotenv_path(e.repo)})")
+        return
+    gh = shutil.which("gh")
+    if not gh:
+        yield Check("github token", FAIL, "GH_TOKEN set but gh is not installed (brew install gh)")
+        return
+    r = subprocess.run([gh, "auth", "status"], capture_output=True, text=True, env={**os.environ, "GH_TOKEN": tok})
+    yield Check("github token", OK if r.returncode == 0 else FAIL,
+                "gh authenticated with GH_TOKEN from harness/.envrc" if r.returncode == 0 else (r.stderr or r.stdout).strip()[-200:])
+
+
 def external_plugins(e):
     from .. import plugins
     for name, ok, detail in plugins.status(e.repo):
@@ -154,7 +170,7 @@ def notes(e):
 
 
 CHECKS = [toolchain, binaries, lsp, opam_export, graph, session_config, no_leakage, git_hook, linters,
-          external_plugins, notes]
+          github, external_plugins, notes]
 
 
 def render(checks):

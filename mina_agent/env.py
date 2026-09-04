@@ -112,6 +112,11 @@ class Env:
     def usable(self) -> bool:
         return self.mode is not Mode.NONE
 
+    def session_env(self) -> dict[str, str]:
+        """The activated env plus what harness/.envrc exports (tokens the
+        sessions need, never committed): what every Claude session runs with."""
+        return {**self.activate(), **dotenv(self.repo)}
+
     def summary(self) -> str:
         """One line: mode, activation, dune and OCaml versions. The only
         place this is formatted."""
@@ -284,6 +289,23 @@ def _log(msg):
 
 
 # -- detection ---------------------------------------------------------------
+
+def dotenv_path(repo) -> str:
+    return os.path.join(repo, "harness", ".envrc")
+
+
+def dotenv(repo) -> dict[str, str]:
+    """Variables harness/.envrc exports, sourced by bash so any direnv-style
+    file works. Only variables it sets or changes are returned; empty when
+    the file is absent."""
+    p = dotenv_path(repo)
+    if not os.path.exists(p):
+        return {}
+    r = subprocess.run(["bash", "-c", 'set -a; source "$1" >/dev/null 2>&1; env -0', "_", p],
+                       capture_output=True, cwd=repo)
+    after = dict(kv.split("=", 1) for kv in r.stdout.decode(errors="replace").split("\0") if "=" in kv)
+    return {k: v for k, v in after.items() if os.environ.get(k) != v}
+
 
 class NoToolchain(RuntimeError):
     """Raised by require() when no usable toolchain was detected. The CLI

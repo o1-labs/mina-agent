@@ -18,8 +18,24 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
     if e.mode == "none":
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
-    graph.derive_and_write(e)
+    g = graph.derive_and_write(e)
     prompt = phases.render(phase, args)
+    session = None
+    if phase.get("session") == "profile":
+        # instrument the focus for the whole run; the model gets the same
+        # Session block an interactive profile session starts with
+        from .. import profile as P, tools
+        from .profile import _resolve_focus, _workloads
+        if P.active(e.repo):
+            typer.echo("a profiling session is already active; run mina-agent profile --restore first", err=True)
+            raise typer.Exit(2)
+        lib = _resolve_focus(tools, g, args["focus"])
+        plan = {"focus": lib, "dirs": [g["libraries"][lib]["dir"]]}
+        block = [f"\n## Session\n\nFocus: library {lib} in {g['libraries'][lib]['dir']}, instrumented.",
+                 "Workload candidates (cheapest and most direct first):"]
+        block += [f"  profile_run(\"{spec}\")  [{cost}]  {why}" for spec, why, cost in _workloads(tools, g, plan)]
+        prompt += "\n".join(block) + "\n"
+        session = (lib, [lib])
     options = agent.build_options(phase, e, max_turns=max_turns, max_budget_usd=max_budget_usd,
                                   model=model)
     if dry_run:
@@ -30,8 +46,19 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = paths.logs_dir(e.repo) / f"{stamp}-{phase['name']}.jsonl"
     print(f"phase {phase['name']}  args {args}  log {os.path.relpath(log_path, e.repo)}\n")
-    traj = agent.run_headless(prompt, options, log_path,
-                              on_call=lambda t, c: print(t.progress_line(c), flush=True))
+    if session:
+        s = P.start(e.repo, g, session[0], "lib", session[1])
+        print(f"profiling session: instrumented {len(s['injected'])} dune file(s) for {session[0]}\n")
+    try:
+        traj = agent.run_headless(prompt, options, log_path,
+                                  on_call=lambda t, c: print(t.progress_line(c), flush=True))
+    finally:
+        if session:
+            rep = P.restore(e.repo)
+            print(f"\nprofiling session ended: restored {len(rep['restored'])} dune file(s), "
+                  f"{len(rep['profiles'])} profile(s) kept")
+            for f in rep["source_edits"]:
+                print(f"  source edit left in place: {f}")
     if agent.STDERR:
         sys.stderr.write("\n".join(agent.STDERR[-20:]) + "\n")
     finish(traj, phase["name"], str(log_path), trace)

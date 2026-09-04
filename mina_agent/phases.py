@@ -43,6 +43,7 @@ def load(path):
         "max_turns": int(meta.get("max_turns", 30)),
         "max_budget_usd": float(meta.get("max_budget_usd", 5)),
         "args": lst("args"),
+        "session": meta.get("session"),   # "profile": run inside a profiling session on args["focus"]
         "body": body,
         "summary": body.split("\n\n", 1)[0].replace("\n", " "),
     }

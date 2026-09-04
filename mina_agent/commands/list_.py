@@ -36,6 +36,41 @@ def tests():
 
 
 @app.command()
+def libraries(filter: str = typer.Option("", "--filter", help="Only names or directories containing this."),
+              inline_tests: bool = typer.Option(False, "--inline-tests", help="Only libraries with inline tests."),
+              limit: int = typer.Option(60, "--limit", help="Rows to show (most depended-on first).")):
+    """Libraries from the derived graph: directory, inline tests, dependents.
+    A good profiling focus has inline tests (a ready workload) and dependents
+    (its cost is paid widely)."""
+    from .. import tools as T
+    g = T.GRAPH.get()
+    rows = []
+    for name, rec in g["libraries"].items():
+        if filter and filter not in name and filter not in rec["dir"]:
+            continue
+        if inline_tests and not rec["has_inline_tests"]:
+            continue
+        deps = g["dependents"].get(name, [])
+        rows.append((name, rec["dir"], rec["has_inline_tests"], len([d for d in deps if ":" not in d]),
+                     len([d for d in deps if d.startswith("test:")])))
+    rows.sort(key=lambda r: (-r[3], r[0]))
+    # ratio columns let rich fit the table to the terminal, ellipsizing the
+    # two text columns rather than wrapping paths mid-word or overflowing
+    t = Table(show_header=True, header_style="bold", expand=True,
+              caption="deps: libraries depending on it; tests: test units depending on it; "
+                      "inline: has (inline_tests)", caption_justify="left")
+    t.add_column("library", ratio=3, no_wrap=True, overflow="ellipsis")
+    t.add_column("dir", ratio=4, no_wrap=True, overflow="ellipsis")
+    for c in ("inline", "deps", "tests"):
+        t.add_column(c, justify="right", no_wrap=True)
+    for name, d, it, nl, nt in rows[:limit]:
+        t.add_row(name, d, "yes" if it else "", str(nl), str(nt))
+    Console().print(t)
+    if len(rows) > limit:
+        print(f"{len(rows) - limit} more; raise --limit or narrow --filter")
+
+
+@app.command()
 def phases():
     """Phase files and the subcommands they generate."""
     from .. import phases as P

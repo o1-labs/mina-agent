@@ -77,7 +77,7 @@ app.command()(discuss.discuss)
 app.command()(trace.trace)
 app.command()(lint.lint)
 app.command()(dashboard.dashboard)
-app.command()(profile.profile)
+app.command(epilog=profile.EXAMPLES)(profile.profile)
 app.command()(clean.clean)
 run_cmd.register(app)                       # one command per data/phases/*.md
 app.command("serve", hidden=True)(serve.serve)

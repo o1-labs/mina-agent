@@ -83,9 +83,33 @@ def _workloads(tools, g, s):
     return out[:12]
 
 
+def _examples():
+    """Epilog for --help: concrete invocations from the manifest's core
+    libraries, so the examples are real names, not invented ones."""
+    import tomllib
+    with open(paths.MANIFEST, "rb") as fh:
+        core = tomllib.load(fh).get("core", {})
+    ex = [("--focus currency", "a library by its dune name"),
+          ("--focus src/lib/staged_ledger/staged_ledger.ml", "a path inside one")]
+    ex += [(f"--focus {name}", f"core library, {rec['dir']}") for name, rec in list(core.items())[:3]]
+    ex += [("--focus mina_ledger --scope deps", "also instrument its direct dependencies"),
+           ("--focus pickles --dry-run", "show the plan and workloads, instrument nothing")]
+    lines = ["[bold]Examples[/bold]", ""]
+    for args, why in ex:
+        lines += [f"  mina-agent profile {args}", f"      {why}"]
+    lines += ["", "Find a focus with [bold]mina-agent list libraries[/bold] (--filter <substring>, "
+              "--inline-tests): every library with its directory, whether it has inline tests, "
+              "and how many libraries depend on it."]
+    return "\n".join(lines)
+
+
+EXAMPLES = _examples()
+
+
 def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
-                                                help="Library to profile: a dune library name, a public "
-                                                     "name, or a source path inside it."),
+                                                help="Library to profile: a dune library name (currency, "
+                                                     "pickles, mina_ledger), a public name, or a source path "
+                                                     "inside it (src/lib/currency/currency.ml). See Examples."),
             scope: str = typer.Option("lib", "--scope", help="Which libraries to instrument: lib (the focus), "
                                                           "deps (plus its direct local dependencies), cone "
                                                           "(plus its whole local dependency cone)."),

@@ -9,6 +9,7 @@
     max_budget_usd: 5
     args: target
     needs: gh                # executables that must be on PATH
+    mode: interactive        # run in the TUI by default (headless is the default)
     env: SOME_TOKEN          # variables that must be set, in the shell or harness/.envrc
     ---
     Run the mina-harness `build` tool on `{{target}}` ...
@@ -56,7 +57,14 @@ def load(path) -> Phase:
         session=meta.get("session"),
         env=_csv(meta.get("env", "")),
         needs=_csv(meta.get("needs", "")),
+        mode=_mode(meta.get("mode", "headless"), path),
     )
+
+
+def _mode(value: str, path) -> str:
+    if value not in ("headless", "interactive"):
+        raise ValueError(f"{path}: mode must be headless or interactive, got {value!r}")
+    return value
 
 
 def all_phases() -> list[Phase]:

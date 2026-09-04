@@ -55,7 +55,8 @@ where both files are. GitHub cannot take the zip through the API; drag it
 onto the issue in the browser.
 
 Verifying a PR's performance claims: `mina-agent run verify-perf --pr <number>`
-reads the PR, locates the workload it says it measured (and stops if it
+opens a TUI session (this phase is interactive by default; `--headless` runs
+it unattended) that reads the PR, locates the workload it says it measured (and stops if it
 does not say), then measures base and head with no instrumentation:
 /usr/bin/time for wall clock and peak RSS, the runtime's GC counters for
 bytes allocated, and samply for the share of samples under a named

@@ -14,7 +14,8 @@ from .. import agent, paths, phases
 from ..model import Phase
 
 
-def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model, scope="lib"):
+def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model, scope="lib",
+               headless=False, interactive=False):
     from .. import env as envmod, graph, profile as P
     from .profile import _report
     e = envmod.require()
@@ -39,6 +40,9 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model,
         libs = P.scope_libraries(g, lib, scope)
         prompt += "\n" + P.session_block(e.repo, g, lib, scope, libs) + "\n"
         session = (lib, libs)
+    tui = (phase.interactive or interactive) and not headless
+    if tui:
+        return _run_in_tui(phase, e, g, prompt, session, scope, dry_run)
     options = agent.build_options(phase, e, max_turns=max_turns, max_budget_usd=max_budget_usd,
                                   model=model)
     if dry_run:
@@ -68,6 +72,35 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model,
     if agent.STDERR:
         sys.stderr.write("\n".join(agent.STDERR[-20:]) + "\n")
     finish(traj, phase.name, str(log_path), trace)
+
+
+def _run_in_tui(phase, e, g, prompt, session, scope, dry_run):
+    """The phase's prompt as the first message of a TUI session with the
+    phase's permission mode and tool walls: you watch and steer, nothing is
+    logged as a run. A profile session is started and restored around it."""
+    from .. import profile as P
+    from .profile import _report
+    if dry_run:
+        print("[dry-run] first message:\n" + prompt)
+        print("\n[dry-run] command:")
+        for a in agent.interactive_argv(prompt, e.repo, phase=phase)[1:]:
+            print("   ", a[:160].replace("\n", " ") + ("..." if len(a) > 160 else ""))
+        return
+    if session:
+        try:
+            s = P.start(e.repo, g, session[0], scope, session[1])
+        except RuntimeError as ex:
+            typer.echo(f"cannot start the profiling session: {ex}", err=True)
+            raise typer.Exit(2)
+        typer.echo(f"profiling session: instrumented {len(s.injected)} dune file(s) for {session[0]}", err=True)
+    typer.echo(f"phase {phase.name} in the TUI (permission mode {phase.permission_mode}); "
+               f"--headless runs it unattended", err=True)
+    try:
+        rc = agent.run_interactive(prompt, e, phase.name, phase=phase)
+    finally:
+        if session:
+            _report(P.restore(e.repo), lambda m: typer.echo(m, err=True))
+    typer.echo(f"session ended (exit {rc})", err=True)
 
 
 def finish(traj, phase_name, log_path, trace):
@@ -112,11 +145,18 @@ def make_command(phase: Phase):
                           default=typer.Option(None, "--max-budget-usd", help=f"Override the phase's {phase.max_budget_usd}.")),
         inspect.Parameter("model", inspect.Parameter.KEYWORD_ONLY, annotation=Optional[str],
                           default=typer.Option(None, "--model", help="Model alias or id.")),
+        inspect.Parameter("headless", inspect.Parameter.KEYWORD_ONLY, annotation=bool,
+                          default=typer.Option(False, "--headless", help="Run unattended through the SDK with a run log"
+                                               + (" (this phase's default)." if phase.mode == "headless" else "."))),
+        inspect.Parameter("interactive", inspect.Parameter.KEYWORD_ONLY, annotation=bool,
+                          default=typer.Option(False, "--interactive", help="Run in the TUI with the phase's prompt and walls"
+                                               + (" (this phase's default)." if phase.interactive else "."))),
     ]
     setattr(command, "__signature__", inspect.Signature(params))
     command.__annotations__ = {p.name: p.annotation for p in params}
     command.__name__ = phase.name
     command.__doc__ = (f"{phase.summary}\n\n"
+                       f"mode: {phase.mode} by default\n"
                        f"tools: {', '.join(phase.allowed_tools)}\n"
                        f"removed: {', '.join(phase.disallowed_tools)}\n"
                        f"limits: {phase.max_turns} turns, ${phase.max_budget_usd}  "

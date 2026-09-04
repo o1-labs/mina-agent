@@ -7,6 +7,7 @@ max_turns: 40
 max_budget_usd: 15
 args: pr
 needs: gh
+mode: interactive
 ---
 Verify the performance claims of pull request `{{pr}}` by reproducing them
 with uninstrumented measurements of the base and head commits, and say

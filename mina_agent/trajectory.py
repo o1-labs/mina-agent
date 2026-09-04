@@ -103,7 +103,8 @@ class Trajectory:
     def progress_line(self, c):
         inp = c["input"]
         arg = (inp.get("target") or inp.get("path") or inp.get("name") or inp.get("library")
-               or inp.get("file_path") or inp.get("file") or inp.get("pattern") or "")
+               or inp.get("file_path") or inp.get("file") or inp.get("pattern") or inp.get("command")
+               or inp.get("query") or inp.get("workload") or "")
         return f"  {tool_label(c['name'])} {short(str(arg), 60)}"
 
     def stats_line(self):

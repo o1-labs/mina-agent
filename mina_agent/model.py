@@ -89,6 +89,11 @@ class Phase:
     session: str | None = None       # "profile": run inside a profiling session on args["focus"]
     env: tuple[str, ...] = ()        # environment variables the phase needs (from the shell or harness/.envrc)
     needs: tuple[str, ...] = ()      # executables that must be on PATH
+    mode: str = "headless"           # "headless" (SDK, no prompts, run log) or "interactive" (the TUI with this prompt and walls)
+
+    @property
+    def interactive(self) -> bool:
+        return self.mode == "interactive"
 
     @property
     def summary(self) -> str:

@@ -43,3 +43,22 @@ def test_load_and_render(tmp_path):
     assert phases.render(p, {"target": "a", "focus": "b"}).endswith("Use a and b.")
     with pytest.raises(ValueError, match="missing args \\['focus'\\]"):
         phases.render(p, {"target": "a"})
+
+
+def test_phase_mode(tmp_path):
+    (tmp_path / "a.md").write_text("---\nname: a\nmode: interactive\n---\nbody\n")
+    (tmp_path / "b.md").write_text("---\nname: b\n---\nbody\n")
+    (tmp_path / "c.md").write_text("---\nname: c\nmode: sideways\n---\nbody\n")
+    assert phases.load(tmp_path / "a.md").interactive and not phases.load(tmp_path / "b.md").interactive
+    with pytest.raises(ValueError, match="mode must be"):
+        phases.load(tmp_path / "c.md")
+    assert next(p for p in phases.all_phases() if p.name == "verify_perf").interactive
+
+
+def test_interactive_argv_carries_phase_walls():
+    from mina_agent import agent
+    p = next(p for p in phases.all_phases() if p.name == "verify_perf")
+    argv = agent.interactive_argv("go", "/tmp", phase=p)
+    assert argv[argv.index("--permission-mode") + 1] == p.permission_mode
+    i = argv.index("--allowedTools")
+    assert "Bash(gh *)" in argv[i:] and "--disallowedTools" in argv

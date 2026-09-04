@@ -14,14 +14,16 @@ from rich.console import Console
 from rich.table import Table
 
 from .. import agent, paths
+from ..model import Status
+from .lint import colored
 
-OK, NOTE, FAIL = "ok", "note", "FAIL"
+OK, NOTE, FAIL = Status.OK, Status.NOTE, Status.FAIL
 
 
-@dataclass
+@dataclass(frozen=True)
 class Check:
     name: str
-    status: str          # ok | note | FAIL
+    status: Status
     detail: str = ""
 
 
@@ -159,9 +161,8 @@ CHECKS = [toolchain, binaries, lsp, opam_export, graph, session_config, no_leaka
 def render(checks):
     t = Table(show_header=True, header_style="bold")
     t.add_column("check"); t.add_column("status"); t.add_column("detail")
-    colors = {OK: "green", NOTE: "yellow", FAIL: "red"}
     for c in checks:
-        t.add_row(c.name, f"[{colors[c.status]}]{c.status}[/{colors[c.status]}]", c.detail)
+        t.add_row(c.name, colored(c.status), c.detail)
     Console().print(t)
 
 
@@ -171,5 +172,5 @@ def doctor():
     e = envmod.detect()
     checks = [c for fn in CHECKS for c in fn(e)]
     render(checks)
-    if any(c.status == FAIL for c in checks):
+    if any(c.status is Status.FAIL for c in checks):
         raise typer.Exit(1)

@@ -4,19 +4,25 @@ from rich.console import Console
 from rich.table import Table
 
 from .. import lint as L
+from ..model import Status
+
+STATUS_COLOR = {Status.OK: "green", Status.FAIL: "red", Status.SKIP: "yellow", Status.NOTE: "cyan"}
+
+
+def colored(status: Status) -> str:
+    return f"[{STATUS_COLOR[status]}]{status}[/{STATUS_COLOR[status]}]"
 
 
 def render(files, results, scope):
     t = Table(show_header=True, header_style="bold", title=f"lint ({scope}: {len(files)} file(s))")
     t.add_column("check"); t.add_column("CI job"); t.add_column("status"); t.add_column("detail")
-    colors = {"ok": "green", "fail": "red", "skip": "yellow", "note": "cyan"}
     for r in results:
         detail = r.detail
-        if r.files and r.status == "fail":
+        if r.files and r.status is Status.FAIL:
             detail += "\n" + "\n".join("  " + f for f in r.files[:20])
         if r.fix:
             detail += f"\nfix: {r.fix}"
-        t.add_row(r.name, r.job, f"[{colors[r.status]}]{r.status}[/{colors[r.status]}]", detail)
+        t.add_row(r.name, r.job, colored(r.status), detail)
     Console().print(t)
 
 
@@ -46,5 +52,5 @@ def lint(all_: bool = typer.Option(False, "--all", help="Whole tree instead of t
     scope = "all" if all_ else "staged"
     files, results = L.run(e, scope=scope, fix=fix)
     render(files, results, scope)
-    if any(r.status == "fail" for r in results):
+    if any(r.status is Status.FAIL for r in results):
         raise typer.Exit(1)

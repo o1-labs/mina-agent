@@ -66,14 +66,15 @@ def pre_bash():
 def pre_commit():
     """git pre-commit: run CI's lint jobs on the staged files; non-zero blocks the commit."""
     from .. import env as envmod, lint as L
+    from ..model import Status
     from .lint import render
     e = envmod.detect()
     if not e.usable:
         sys.stderr.write("mina-agent pre-commit: no usable toolchain, skipping lint\n")
         return
     files, results = L.run(e, scope="staged", caller="pre-commit")
-    bad = [r for r in results if r.status == "fail"]
-    skipped = [r for r in results if r.status == "skip"]
+    bad = [r for r in results if r.status is Status.FAIL]
+    skipped = [r for r in results if r.status is Status.SKIP]
     if bad or skipped:
         render(files, results, "staged")
     if bad:

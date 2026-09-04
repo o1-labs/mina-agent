@@ -14,43 +14,48 @@
 Each file under mina_agent/data/phases/ becomes a `mina-agent <name>`
 subcommand whose --<arg> options come from `args`. Nothing is listed by hand.
 """
-import os
 import re
 import sys
+from pathlib import Path
 
 from . import paths
+from .model import Phase
 
 
-def load(path):
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
+def _front_matter(text: str, path) -> tuple[dict[str, str], str]:
     m = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.S)
     if not m:
         raise ValueError(f"{path}: expected a '---' front-matter block")
-    meta = {}
+    meta: dict[str, str] = {}
     for line in m.group(1).splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        k, _, v = line.partition(":")
-        meta[k.strip()] = v.strip()
-    lst = lambda k: [x.strip() for x in meta.get(k, "").split(",") if x.strip()]
-    body = m.group(2).strip()
-    return {
-        "name": meta.get("name") or os.path.splitext(os.path.basename(path))[0],
-        "path": str(path),
-        "allowed_tools": lst("allowed_tools"),
-        "disallowed_tools": lst("disallowed_tools"),
-        "permission_mode": meta.get("permission_mode", "default"),
-        "max_turns": int(meta.get("max_turns", 30)),
-        "max_budget_usd": float(meta.get("max_budget_usd", 5)),
-        "args": lst("args"),
-        "session": meta.get("session"),   # "profile": run inside a profiling session on args["focus"]
-        "body": body,
-        "summary": body.split("\n\n", 1)[0].replace("\n", " "),
-    }
+        if line.strip() and not line.lstrip().startswith("#"):
+            k, _, v = line.partition(":")
+            meta[k.strip()] = v.strip()
+    return meta, m.group(2).strip()
 
 
-def all_phases():
+def _csv(s: str) -> tuple[str, ...]:
+    return tuple(x.strip() for x in s.split(",") if x.strip())
+
+
+def load(path) -> Phase:
+    path = Path(path)
+    meta, body = _front_matter(path.read_text(encoding="utf-8"), path)
+    return Phase(
+        name=meta.get("name") or path.stem,
+        path=str(path),
+        body=body,
+        args=_csv(meta.get("args", "")),
+        allowed_tools=_csv(meta.get("allowed_tools", "")),
+        disallowed_tools=_csv(meta.get("disallowed_tools", "")),
+        permission_mode=meta.get("permission_mode", "default"),
+        max_turns=int(meta.get("max_turns", 30)),
+        max_budget_usd=float(meta.get("max_budget_usd", 5)),
+        session=meta.get("session"),
+    )
+
+
+def all_phases() -> list[Phase]:
     """Every valid phase under data/phases. A malformed file is reported on
     stderr and skipped, so one bad phase cannot take down the CLI (serve,
     hooks and the git pre-commit hook all go through the same entry point)."""
@@ -63,13 +68,13 @@ def all_phases():
     return out
 
 
-def render(phase, args):
-    missing = [a for a in phase["args"] if a not in args or args[a] is None]
-    unknown = [a for a in args if a not in phase["args"]]
+def render(phase: Phase, args: dict) -> str:
+    missing = [a for a in phase.args if a not in args or args[a] is None]
+    unknown = [a for a in args if a not in phase.args]
     if missing or unknown:
-        raise ValueError(f"phase {phase['name']}: missing args {missing}, unknown args {unknown}; "
-                         f"declared: {phase['args']}")
-    body = phase["body"]
+        raise ValueError(f"phase {phase.name}: missing args {missing}, unknown args {unknown}; "
+                         f"declared: {list(phase.args)}")
+    body = phase.body
     for k, v in args.items():
         body = body.replace("{{" + k + "}}", str(v))
     left = re.findall(r"{{\w+}}", body)

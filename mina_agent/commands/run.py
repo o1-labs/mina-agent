@@ -10,6 +10,7 @@ from typing import Optional
 import typer
 
 from .. import agent, paths, phases
+from ..model import Phase
 
 
 def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model):
@@ -21,7 +22,7 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
     g = graph.load_or_derive(e)
     prompt = phases.render(phase, args)
     session = None
-    if phase.get("session") == "profile":
+    if phase.session == "profile":
         # instrument the focus for the whole run; the model gets the same
         # Session block an interactive profile session starts with
         from .. import tools
@@ -44,8 +45,8 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
         print("\n[dry-run] system prompt addition:\n" + agent.system_addition())
         return
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    log_path = paths.logs_dir(e.repo) / f"{stamp}-{phase['name']}.jsonl"
-    print(f"phase {phase['name']}  args {args}  log {os.path.relpath(log_path, e.repo)}\n")
+    log_path = paths.logs_dir(e.repo) / f"{stamp}-{phase.name}.jsonl"
+    print(f"phase {phase.name}  args {args}  log {os.path.relpath(log_path, e.repo)}\n")
     if session:
         s = P.start(e.repo, g, session[0], "lib", session[1])
         print(f"profiling session: instrumented {len(s['injected'])} dune file(s) for {session[0]}\n")
@@ -61,7 +62,7 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
                 print(f"  source edit left in place: {f}")
     if agent.STDERR:
         sys.stderr.write("\n".join(agent.STDERR[-20:]) + "\n")
-    finish(traj, phase["name"], str(log_path), trace)
+    finish(traj, phase.name, str(log_path), trace)
 
 
 def finish(traj, phase_name, log_path, trace):
@@ -84,8 +85,8 @@ def finish(traj, phase_name, log_path, trace):
         raise typer.Exit(1)
 
 
-def make_command(phase):
-    arg_names = list(phase["args"])
+def make_command(phase: Phase):
+    arg_names = list(phase.args)
 
     def command(**kw):
         args = {a: kw.pop(a) for a in arg_names}
@@ -101,20 +102,20 @@ def make_command(phase):
         inspect.Parameter("dry_run", inspect.Parameter.KEYWORD_ONLY, annotation=bool,
                           default=typer.Option(False, "--dry-run", help="Print options and prompts, run nothing.")),
         inspect.Parameter("max_turns", inspect.Parameter.KEYWORD_ONLY, annotation=Optional[int],
-                          default=typer.Option(None, "--max-turns", help=f"Override the phase's {phase['max_turns']}.")),
+                          default=typer.Option(None, "--max-turns", help=f"Override the phase's {phase.max_turns}.")),
         inspect.Parameter("max_budget_usd", inspect.Parameter.KEYWORD_ONLY, annotation=Optional[float],
-                          default=typer.Option(None, "--max-budget-usd", help=f"Override the phase's {phase['max_budget_usd']}.")),
+                          default=typer.Option(None, "--max-budget-usd", help=f"Override the phase's {phase.max_budget_usd}.")),
         inspect.Parameter("model", inspect.Parameter.KEYWORD_ONLY, annotation=Optional[str],
                           default=typer.Option(None, "--model", help="Model alias or id.")),
     ]
     setattr(command, "__signature__", inspect.Signature(params))
     command.__annotations__ = {p.name: p.annotation for p in params}
-    command.__name__ = phase["name"]
-    command.__doc__ = (f"{phase['summary']}\n\n"
-                       f"tools: {', '.join(phase['allowed_tools'])}\n"
-                       f"removed: {', '.join(phase['disallowed_tools'])}\n"
-                       f"limits: {phase['max_turns']} turns, ${phase['max_budget_usd']}  "
-                       f"permission mode: {phase['permission_mode']}")
+    command.__name__ = phase.name
+    command.__doc__ = (f"{phase.summary}\n\n"
+                       f"tools: {', '.join(phase.allowed_tools)}\n"
+                       f"removed: {', '.join(phase.disallowed_tools)}\n"
+                       f"limits: {phase.max_turns} turns, ${phase.max_budget_usd}  "
+                       f"permission mode: {phase.permission_mode}")
     return command
 
 
@@ -124,6 +125,6 @@ def register(app):
     skipped rather than breaking every other command."""
     for phase in phases.all_phases():
         try:
-            app.command(phase["name"].replace("_", "-"))(make_command(phase))
+            app.command(phase.command_name)(make_command(phase))
         except (ValueError, TypeError) as ex:
-            sys.stderr.write(f"mina-agent: skipping phase {phase['name']}: {ex}\n")
+            sys.stderr.write(f"mina-agent: skipping phase {phase.name}: {ex}\n")

@@ -78,8 +78,7 @@ def phases():
     for c in ("command", "args", "tools", "removed", "limits"):
         t.add_column(c)
     for p in P.all_phases():
-        t.add_row("mina-agent " + p["name"].replace("_", "-"),
-                  " ".join(f"--{a}" for a in p["args"]), ", ".join(p["allowed_tools"]),
-                  ", ".join(p["disallowed_tools"]),
-                  f"{p['max_turns']} turns, ${p['max_budget_usd']}, {p['permission_mode']}")
+        t.add_row(f"mina-agent {p.command_name}", " ".join(f"--{a}" for a in p.args),
+                  ", ".join(p.allowed_tools), ", ".join(p.disallowed_tools),
+                  f"{p.max_turns} turns, ${p.max_budget_usd}, {p.permission_mode}")
     Console().print(t)

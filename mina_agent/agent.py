@@ -21,6 +21,7 @@ import sys
 from typing import Any, cast
 
 from . import lsp, paths
+from .model import Phase
 from .trajectory import Trajectory, to_record
 
 # --------------------------------------------------------------------------
@@ -174,18 +175,18 @@ def system_addition():
 # headless
 # --------------------------------------------------------------------------
 
-def build_options(phase, env, *, max_turns=None, max_budget_usd=None, model=None):
+def build_options(phase: Phase, env, *, max_turns=None, max_budget_usd=None, model=None):
     from claude_agent_sdk import ClaudeAgentOptions
-    disallowed = list(dict.fromkeys(phase["disallowed_tools"] + deny_rules()))
+    disallowed = list(dict.fromkeys([*phase.disallowed_tools, *deny_rules()]))
     return ClaudeAgentOptions(
         system_prompt={"type": "preset", "preset": "claude_code", "append": system_addition()},
         mcp_servers=cast(Any, mcp_config()["mcpServers"]),
         strict_mcp_config=True,
-        allowed_tools=phase["allowed_tools"],
+        allowed_tools=list(phase.allowed_tools),
         disallowed_tools=disallowed,
-        permission_mode=phase["permission_mode"],
-        max_turns=max_turns or phase["max_turns"],
-        max_budget_usd=max_budget_usd or phase["max_budget_usd"],
+        permission_mode=cast(Any, phase.permission_mode),
+        max_turns=max_turns or phase.max_turns,
+        max_budget_usd=max_budget_usd or phase.max_budget_usd,
         model=model,
         cwd=env.repo,
         env=env.activate(),

@@ -1,4 +1,5 @@
 """A malformed phase file is skipped with a warning; the others still register."""
+import pytest
 import typer
 
 from mina_agent import paths, phases
@@ -18,7 +19,7 @@ def _phases_dir(tmp_path, monkeypatch, **files):
 
 def test_all_phases_skips_unparseable_files(tmp_path, monkeypatch, capsys):
     _phases_dir(tmp_path, monkeypatch, good=GOOD, broken=NO_FRONT_MATTER, badint=BAD_INT)
-    names = [p["name"] for p in phases.all_phases()]
+    names = [p.name for p in phases.all_phases()]
     assert names == ["good"]
     err = capsys.readouterr().err
     assert "skipping phase broken.md" in err and "skipping phase badint.md" in err
@@ -30,3 +31,15 @@ def test_register_skips_phase_that_cannot_become_a_command(tmp_path, monkeypatch
     run_cmd.register(app)
     assert [c.name for c in app.registered_commands] == ["good"]
     assert "skipping phase badarg" in capsys.readouterr().err
+
+
+def test_load_and_render(tmp_path):
+    f = tmp_path / "p.md"
+    f.write_text("---\nname: p\nargs: target, focus\nallowed_tools: Read, Edit\nmax_turns: 7\nsession: profile\n---\n"
+                 "First paragraph\nstill first.\n\nUse {{target}} and {{focus}}.\n")
+    p = phases.load(f)
+    assert (p.name, p.args, p.allowed_tools, p.max_turns, p.session) == ("p", ("target", "focus"), ("Read", "Edit"), 7, "profile")
+    assert p.summary == "First paragraph still first."
+    assert phases.render(p, {"target": "a", "focus": "b"}).endswith("Use a and b.")
+    with pytest.raises(ValueError, match="missing args \\['focus'\\]"):
+        phases.render(p, {"target": "a"})

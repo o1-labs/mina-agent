@@ -76,7 +76,8 @@ def orientation(e, focus, notes):
 def discuss(focus: Optional[str] = typer.Option(None, "--focus", "-f",
                                                 help="A source path or library to orient on: its build "
                                                      "status and test candidates are injected up front."),
-            dry_run: bool = typer.Option(False, "--dry-run", help="Print the claude command, run nothing.")):
+            dry_run: bool = typer.Option(False, "--dry-run", help="Print the claude command, run nothing."),
+            continue_: bool = typer.Option(False, "--continue", "-c", help="Resume the last discuss session instead of starting one.")):
     """Start an interactive Claude session with the harness tools and walls.
 
     Read-only by default: the model asks before editing or running tests, and
@@ -90,15 +91,16 @@ def discuss(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     if not notes.exists():
         notes.write_text(NOTES_TEMPLATE)
     first_message = "\n".join([RULES.format(notes=str(notes)), *orientation(e, focus, notes)])
+    resume = agent.resume_id("discuss") if continue_ else None
 
     if dry_run:
         print("[dry-run] first message:\n" + first_message)
         print("\n[dry-run] command:")
-        for a in agent.interactive_argv(first_message, e.repo)[2:]:
+        for a in agent.interactive_argv(first_message, e.repo, resume=resume)[1:]:
             print("   ", a[:160].replace("\n", " ") + ("..." if len(a) > 160 else ""))
         return
     before = _count_notes(notes)
     typer.echo(f"notes file: {notes}", err=True)
-    rc = agent.run_interactive(first_message, e)
+    rc = agent.run_interactive(first_message, e, "discuss", resume=resume)
     added = _count_notes(notes) - before
     typer.echo(f"session ended (exit {rc}); {added} note(s) added to {notes.name}", err=True)

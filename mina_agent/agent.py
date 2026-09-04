@@ -273,12 +273,14 @@ def run_headless(prompt, options, log_path, on_call=lambda traj, c: None):
 # interactive
 # --------------------------------------------------------------------------
 
-def interactive_argv(first_message, repo, develop=False):
+def interactive_argv(first_message, repo, develop=False, resume=None):
     """`claude` TUI with the harness server, facts, and walls. Everything the
     session needs travels on the command line (--settings, --mcp-config,
     --plugin-dir); nothing is read from or written to the repo's .claude/.
-    develop=True: edits accepted without asking, shell allowlist."""
-    argv = ["claude", first_message,
+    develop=True: edits accepted without asking, shell allowlist.
+    resume: a Claude session id to continue instead of a fresh session with
+    first_message."""
+    argv = ["claude", *(["--resume", resume] if resume else [first_message]),
             "--append-system-prompt", system_addition(),
             "--settings", json.dumps(session_settings(develop)),
             "--mcp-config", json.dumps(mcp_config()), "--strict-mcp-config"]
@@ -292,6 +294,20 @@ def interactive_argv(first_message, repo, develop=False):
     return argv
 
 
-def run_interactive(first_message, env, develop=False):
-    argv = interactive_argv(first_message, env.repo, develop)
-    return subprocess.run(argv, cwd=env.repo, env=env.session_env()).returncode
+def run_interactive(first_message, env, mode, develop=False, resume=None):
+    """Launch the TUI; `mode` (discuss, develop, profile) is passed to the
+    hooks so the session is recorded for --continue."""
+    from . import sessions
+    argv = interactive_argv(first_message, env.repo, develop, resume)
+    return subprocess.run(argv, cwd=env.repo, env={**env.session_env(), sessions.MODE_VAR: mode}).returncode
+
+
+def resume_id(mode) -> str:
+    """The last session of `mode`, or a typer exit with the reason."""
+    from . import sessions
+    import typer
+    sid = sessions.last(mode)
+    if not sid:
+        typer.echo(f"no previous {mode} session recorded (sessions are logged from their SessionStart hook)", err=True)
+        raise typer.Exit(2)
+    return sid

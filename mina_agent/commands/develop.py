@@ -50,7 +50,8 @@ constraint), append one line to {notes} in the form
 def develop(focus: Optional[str] = typer.Option(None, "--focus", "-f",
                                                 help="A source path or library to orient on: its build "
                                                      "status and test candidates are injected up front."),
-            dry_run: bool = typer.Option(False, "--dry-run", help="Print the claude command, run nothing.")):
+            dry_run: bool = typer.Option(False, "--dry-run", help="Print the claude command, run nothing."),
+            continue_: bool = typer.Option(False, "--continue", "-c", help="Resume the last develop session instead of starting one.")):
     """Start an interactive development session: edits accepted, developer shell only.
 
     The opposite of discuss: Edit/Write run without asking (permission mode
@@ -69,12 +70,13 @@ def develop(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     rules = RULES.format(notes=str(notes), subcommands="/".join(cfg["mina_agent_subcommands"]),
                          heads=", ".join(h for h in cfg["bash_heads"] if h not in ("git", "gh")))
     first_message = "\n".join([rules, *orientation(e, focus, notes)])
+    resume = agent.resume_id("develop") if continue_ else None
     if dry_run:
         print("[dry-run] first message:\n" + first_message)
         print("\n[dry-run] command:")
-        for a in agent.interactive_argv(first_message, e.repo, develop=True)[2:]:
+        for a in agent.interactive_argv(first_message, e.repo, develop=True, resume=resume)[1:]:
             print("   ", a[:160].replace("\n", " ") + ("..." if len(a) > 160 else ""))
         return
-    typer.echo(f"development session; notes file: {notes}", err=True)
-    rc = agent.run_interactive(first_message, e, develop=True)
+    typer.echo(f"development session{' (resumed ' + resume + ')' if resume else ''}; notes file: {notes}", err=True)
+    rc = agent.run_interactive(first_message, e, "develop", develop=True, resume=resume)
     typer.echo(f"session ended (exit {rc})", err=True)

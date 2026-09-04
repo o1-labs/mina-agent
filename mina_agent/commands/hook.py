@@ -103,8 +103,9 @@ def pre_commit():
 @app.command("session-start")
 def session_start():
     """SessionStart: hand the session its facts (tools.facts refreshes the graph cache)."""
-    from .. import env as envmod, tools, banner
-    _payload()
+    from .. import env as envmod, sessions, tools, banner
+    payload = _payload()
+    sessions.record(payload.get("session_id"), payload.get("source"))
     e = envmod.detect()
     out = {"systemMessage": banner.render(e),
            "hookSpecificOutput": {"hookEventName": "SessionStart",

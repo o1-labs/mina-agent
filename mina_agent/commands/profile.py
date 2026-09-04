@@ -165,7 +165,7 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     for l, why in s.skipped:
         typer.echo(f"  skipped {l}: {why}", err=True)
     try:
-        rc = agent.run_interactive(first_message, e)
+        rc = agent.run_interactive(first_message, e, "profile")
     finally:
         rep = P.restore(e.repo)
         typer.echo(f"session ended; restored {len(rep.restored)} dune file(s), "

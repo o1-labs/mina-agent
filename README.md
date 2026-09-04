@@ -73,3 +73,7 @@ picks the instrument for the question: `perf_measure` on the working tree
 or `perf_compare` between commits for samply sample shares, exact
 allocation, peak RSS and wall clock, or a landmarks profiling session for
 per-function attribution. Results are recorded under `state/perf/`.
+
+`--continue` on discuss and develop resumes that mode's last session (the
+harness records its own sessions from the SessionStart hook, so a plain
+`claude` conversation in the same directory is never picked by mistake).

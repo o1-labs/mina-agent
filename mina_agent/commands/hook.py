@@ -62,6 +62,20 @@ def pre_bash():
                                                  "additionalContext": DENIAL_CONTEXT}}))
 
 
+@app.command("bash-allowlist")
+def bash_allowlist():
+    """PreToolUse Bash in development sessions: deny any command outside the
+    manifest's [develop] allowlist. Allowed commands fall through to Claude
+    Code's own permission rules (auto-allow or prompt)."""
+    from .. import agent, guard
+    cfg = agent.develop_config()
+    cmd = (_payload().get("tool_input") or {}).get("command") or ""
+    v = guard.decide(cmd, cfg["bash_heads"], cfg["mina_agent_subcommands"])
+    if not v.allowed:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                 "permissionDecisionReason": f"harness: {v.reason}"}}))
+
+
 @app.command("pre-commit")
 def pre_commit():
     """git pre-commit: run CI's lint jobs on the staged files; non-zero blocks the commit."""

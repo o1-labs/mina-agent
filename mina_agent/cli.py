@@ -23,7 +23,8 @@ Typical workflow:
   2. mina-agent init              register the MCP server and install the walls
   3. mina-agent doctor            confirm everything is wired
   4. mina-agent fix-build-error --target src/lib/<lib> --trace
-  5. mina-agent discuss           interactive session with the harness tools
+  5. mina-agent discuss           interactive session with the harness tools (read-only by default)
+     mina-agent develop           the same with edits accepted and a developer shell: where code is written
   6. mina-agent trace <log>       trajectory evidence for any past run
   7. mina-agent lint              CI's lint jobs on the staged files (also the git pre-commit hook)
   8. mina-agent dashboard --open  live browser view of runs, hooks, denials, and the lint gate
@@ -79,7 +80,7 @@ def _main(ctx: typer.Context,
 
 # ── register commands ─────────────────────────────────────────────────
 
-from .commands import setup, init, doctor, status, discuss, trace, lint, dashboard, clean, profile  # noqa: E402
+from .commands import setup, init, doctor, status, discuss, develop, trace, lint, dashboard, clean, profile  # noqa: E402
 from .commands import serve, hook, exec_, derive, list_            # noqa: E402
 from .commands import run as run_cmd                                # noqa: E402
 
@@ -88,6 +89,7 @@ app.command()(init.init)
 app.command()(doctor.doctor)
 app.command()(status.status)
 app.command()(discuss.discuss)
+app.command()(develop.develop)
 app.command()(trace.trace)
 app.command()(lint.lint)
 app.command()(dashboard.dashboard)

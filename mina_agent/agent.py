@@ -132,12 +132,27 @@ def headless_settings():
     return {k: v for k, v in _template().items() if k != "hooks"}
 
 
-def session_settings():
+def develop_config():
+    """manifest.toml [develop]: the shell allowlist and what runs unprompted."""
+    import tomllib
+    with open(paths.MANIFEST, "rb") as fh:
+        return tomllib.load(fh)["develop"]
+
+
+def session_settings(develop=False):
     """The settings an interactive harness session runs with, passed via
     `claude --settings` so nothing is written into the repo's .claude/.
-    Hook commands point at this binary."""
+    Hook commands point at this binary. develop=True adds the shell
+    allowlist hook, the unprompted commands, and denies the non-developer
+    tools."""
     t = _template()
     t["hooks"] = _hooks()
+    if develop:
+        cfg = develop_config()
+        t["hooks"]["PreToolUse"] = [{"matcher": "Bash", "hooks": [{"type": "command", "command": "mina-agent hook bash-allowlist",
+                                                                    "timeout": 10}]}, *t["hooks"]["PreToolUse"]]
+        t["permissions"]["allow"] = [*t["permissions"].get("allow", []), *cfg["auto_allow"]]
+        t["permissions"]["deny"] = [*cfg["deny_tools"], *t["permissions"]["deny"]]
     binp = mina_agent_bin()
     for matchers in t["hooks"].values():
         for m in matchers:
@@ -258,17 +273,17 @@ def run_headless(prompt, options, log_path, on_call=lambda traj, c: None):
 # interactive
 # --------------------------------------------------------------------------
 
-def interactive_argv(first_message, repo, extra_disallowed=()):
+def interactive_argv(first_message, repo, develop=False):
     """`claude` TUI with the harness server, facts, and walls. Everything the
     session needs travels on the command line (--settings, --mcp-config,
-    --plugin-dir); nothing is read from or written to the repo's .claude/."""
-    settings = session_settings()
-    if extra_disallowed:
-        settings["permissions"]["deny"] = list(extra_disallowed) + settings["permissions"]["deny"]
+    --plugin-dir); nothing is read from or written to the repo's .claude/.
+    develop=True: edits accepted without asking, shell allowlist."""
     argv = ["claude", first_message,
             "--append-system-prompt", system_addition(),
-            "--settings", json.dumps(settings),
+            "--settings", json.dumps(session_settings(develop)),
             "--mcp-config", json.dumps(mcp_config()), "--strict-mcp-config"]
+    if develop:
+        argv += ["--permission-mode", "acceptEdits"]
     if lsp.plugin_dir(repo):
         argv += ["--plugin-dir", str(lsp.plugin_dir(repo))]
     from . import plugins
@@ -277,6 +292,6 @@ def interactive_argv(first_message, repo, extra_disallowed=()):
     return argv
 
 
-def run_interactive(first_message, env, extra_disallowed=()):
-    argv = interactive_argv(first_message, env.repo, extra_disallowed)
+def run_interactive(first_message, env, develop=False):
+    argv = interactive_argv(first_message, env.repo, develop)
     return subprocess.run(argv, cwd=env.repo, env=env.session_env()).returncode

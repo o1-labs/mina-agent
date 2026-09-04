@@ -60,3 +60,10 @@ does not say), then measures base and head with no instrumentation:
 /usr/bin/time for wall clock and peak RSS, the runtime's GC counters for
 bytes allocated, and samply for the share of samples under a named
 function. It reports whether the claimed numbers roughly recover.
+
+Writing code: `mina-agent develop` is discuss's opposite. Edits are accepted
+without asking, tests may be run, and the shell is an allowlist enforced by
+a hook (git, gh, `mina-agent lint/list/status/doctor`, read-only utilities;
+the list is `[develop]` in `manifest.toml`, grow it as needed). The raw
+toolchain and build configuration stay walled; building and testing go
+through the harness tools.

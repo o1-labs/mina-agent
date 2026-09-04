@@ -48,6 +48,31 @@ def _count_notes(p):
     return sum(1 for l in p.read_text().splitlines() if l.startswith("- ["))
 
 
+def orientation(e, focus, notes):
+    """The `## Current state` block: environment, the focus's build and test
+    candidates, recent notes. Shared by discuss and develop."""
+    from .. import tools
+    out = ["## Current state", "", f"Environment: {e.summary()}."]
+    if focus:
+        try:
+            u = tools.library_of(focus)
+            out.append(f"Focus {focus}: {u['kind']} unit {u['key']} in {u['dir']}.")
+            target = u["dir"] if u["kind"] == "lib" else focus
+            b = tools.build(target)
+            out.append(f"build {target}: ok={b['ok']} errors={len(b['errors'])} "
+                       f"warnings={len(b['warnings'])} in {b['elapsed_s']}s.")
+            out += [f"  {err['file']}:{err['line']}:{err['col_start']} {err['message']}" for err in b["errors"][:5]]
+            tf = tools.tests_for(focus)
+            out.append("tests_for candidates: " + ", ".join(f"{c['name']} [{c['cost']}]" for c in tf["candidates"][:5]))
+        except Exception as ex:
+            out.append(f"Focus {focus}: could not orient ({ex}).")
+    if notes.exists():
+        tail = [l for l in notes.read_text().splitlines() if l.startswith("- [")][-10:]
+        if tail:
+            out += ["", "Recent notes:"] + tail
+    return out
+
+
 def discuss(focus: Optional[str] = typer.Option(None, "--focus", "-f",
                                                 help="A source path or library to orient on: its build "
                                                      "status and test candidates are injected up front."),
@@ -58,35 +83,13 @@ def discuss(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     the build-config / Rust-boundary edit rules and the raw-toolchain deny
     rules apply structurally. Conclusions land in harness/state/NOTES.md.
     """
-    from .. import env as envmod, graph, tools
+    from .. import env as envmod, graph
     e = envmod.require()
     graph.load_or_derive(e)
     notes = paths.notes_file()
     if not notes.exists():
         notes.write_text(NOTES_TEMPLATE)
-
-    orient = [RULES.format(notes=str(notes)), "## Current state", ""]
-    orient.append(f"Environment: {e.summary()}.")
-    if focus:
-        try:
-            u = tools.library_of(focus)
-            orient.append(f"Focus {focus}: {u['kind']} unit {u['key']} in {u['dir']}.")
-            target = u["dir"] if u["kind"] == "lib" else focus
-            b = tools.build(target)
-            orient.append(f"build {target}: ok={b['ok']} errors={len(b['errors'])} "
-                          f"warnings={len(b['warnings'])} in {b['elapsed_s']}s.")
-            for err in b["errors"][:5]:
-                orient.append(f"  {err['file']}:{err['line']}:{err['col_start']} {err['message']}")
-            tf = tools.tests_for(focus)
-            orient.append("tests_for candidates: " + ", ".join(
-                f"{c['name']} [{c['cost']}]" for c in tf["candidates"][:5]))
-        except Exception as ex:
-            orient.append(f"Focus {focus}: could not orient ({ex}).")
-    if notes.exists():
-        tail = [l for l in notes.read_text().splitlines() if l.startswith("- [")][-10:]
-        if tail:
-            orient += ["", "Recent notes:"] + tail
-    first_message = "\n".join(orient)
+    first_message = "\n".join([RULES.format(notes=str(notes)), *orientation(e, focus, notes)])
 
     if dry_run:
         print("[dry-run] first message:\n" + first_message)

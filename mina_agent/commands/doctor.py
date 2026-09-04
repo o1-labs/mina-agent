@@ -34,7 +34,8 @@ def _run(argv, cwd=None):
 # ---- checks: each takes the detected env and returns one or more Checks ----
 
 def toolchain(e):
-    yield Check("toolchain", OK if e.usable else FAIL, e.summary())
+    yield Check("toolchain", OK if e.usable else FAIL,
+                e.summary() + ("" if e.usable else "; " + "; ".join(e.reasons)))
     b = e.build_dir
     drift = bool(b.built_by) and b.built_by != e.mode
     yield Check("_build provenance", FAIL if drift else OK, f"built_by={b.built_by} exists={b.exists}")

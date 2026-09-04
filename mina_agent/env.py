@@ -110,7 +110,9 @@ class Env:
 
     @property
     def usable(self) -> bool:
-        return self.mode is not Mode.NONE
+        """Only the opam mode runs today. A nix shell is detected and reported
+        but refused until the items in NIX.md are done."""
+        return self.mode is Mode.OPAM
 
     def session_env(self) -> dict[str, str]:
         """The activated env plus what harness/.envrc exports (tokens the
@@ -290,6 +292,10 @@ def _log(msg):
 
 # -- detection ---------------------------------------------------------------
 
+NIX_UNSUPPORTED = ("nix mode is not supported yet: the harness refuses to run inside a nix shell "
+                   "until the items in harness/NIX.md are done (leave the shell and use the repo's opam switch)")
+
+
 def dotenv_path(repo) -> str:
     return os.path.join(repo, "harness", ".envrc")
 
@@ -348,13 +354,14 @@ def detect() -> Env:
         mode = Mode(override)
         reasons.append(f"HARNESS_MODE={override} override")
         if mode is Mode.NIX:
-            warnings.append("nix mode is a stub and unverified on this machine")
+            reasons.append(NIX_UNSUPPORTED)
             activated = in_nix
         else:
             activated = in_opam
     elif in_nix:
         mode, activated = Mode.NIX, True
         reasons.append(f"IN_NIX_SHELL set and dune is {dune_real}")
+        reasons.append(NIX_UNSUPPORTED)
     elif in_opam:
         mode, activated = Mode.OPAM, True
         reasons.append(f"dune resolves to {dune_real}, under the repo-local switch")

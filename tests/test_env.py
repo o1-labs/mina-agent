@@ -26,3 +26,20 @@ def test_require_returns_usable_env(monkeypatch):
     e = _env(Mode.OPAM)
     monkeypatch.setattr(envmod, "detect", lambda: e)
     assert envmod.require() is e
+
+
+def test_nix_shell_is_detected_but_refused(monkeypatch, tmp_path):
+    dune = tmp_path / "nix" / "store" / "abc-dune" / "bin" / "dune"
+    dune.parent.mkdir(parents=True)
+    dune.write_text("")
+    monkeypatch.setenv("IN_NIX_SHELL", "impure")
+    monkeypatch.delenv("HARNESS_MODE", raising=False)
+    monkeypatch.setattr(envmod, "_repo_root", lambda: str(tmp_path))
+    monkeypatch.setattr(envmod.shutil, "which", lambda name, path=None: str(dune) if name == "dune" else None)
+    monkeypatch.setattr(envmod, "_real", lambda p: "/nix/store/abc-dune/bin/dune" if p else None)
+    e = envmod.detect()
+    assert e.mode is Mode.NIX and e.activated and not e.usable
+    assert any("NIX.md" in r for r in e.reasons)
+    with pytest.raises(envmod.NoToolchain, match="NIX.md"):
+        monkeypatch.setattr(envmod, "detect", lambda: e)
+        envmod.require()

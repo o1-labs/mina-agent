@@ -164,6 +164,21 @@ def workload_candidates(g, focus) -> list[WorkloadCandidate]:
     return out[:12]
 
 
+def session_block(repo, g, focus, scope, libs) -> str:
+    """The `## Session` orientation text both the interactive and the headless
+    profiling session hand the model: focus, instrumented scope, workload
+    candidates, where profiles land."""
+    names = ": " + ", ".join(libs[:15]) + (" ..." if len(libs) > 15 else "") if len(libs) > 1 else ""
+    plural = "y" if len(libs) == 1 else "ies"
+    lines = ["## Session", "",
+             f"Focus: library {focus} in {g['libraries'][focus]['dir']}. Scope {scope}: "
+             f"{len(libs)} instrumented librar{plural}{names}.",
+             "Workload candidates (cheapest and most direct first):"]
+    lines += [f"  profile_run(\"{w.spec}\")  [{w.cost}]  {w.reason}" for w in workload_candidates(g, focus)]
+    lines += ["", f"Profiles land in {state_dir(repo)}; profile ids are their file stems."]
+    return "\n".join(lines)
+
+
 def scope_libraries(g, focus, scope):
     """Library keys to instrument for a focus: the focus alone, its direct
     local deps, or its whole local dependency cone."""

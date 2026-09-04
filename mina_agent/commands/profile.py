@@ -93,8 +93,12 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
                                                           "(plus its whole local dependency cone)."),
             restore: bool = typer.Option(False, "--restore", help="End a session left behind by a crash: "
                                                                   "put the instrumented dune files back."),
-            dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan and first message; instrument nothing.")):
-    """Start an interactive profiling session on a library.
+            dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan and first message; instrument nothing."),
+            headless: bool = typer.Option(False, "--headless", help="Run the profile_hunt phase instead of the TUI: "
+                                                                    "same session and walls, driven by the SDK, no prompts."),
+            max_turns: Optional[int] = typer.Option(None, "--max-turns", help="Headless only: override the phase's turn budget."),
+            trace: bool = typer.Option(False, "--trace", help="Headless only: print and save the trajectory evidence.")):
+    """Start a profiling session on a library, interactive or headless.
 
     The focus libraries get a temporary landmarks stanza in their dune files
     (restored when the session ends), builds in the session are
@@ -121,23 +125,23 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     if P.active(e.repo):
         typer.echo("a profiling session is already active; run mina-agent profile --restore first", err=True)
         raise typer.Exit(2)
-    g = graph.load_or_derive(e)
     if not landmarks.present(e.repo):
         d, msg = landmarks.fetch(e)
         typer.echo(f"landmarks: {d} ({msg})", err=True)
+    if headless:
+        from .. import phases
+        from .run import _run_phase
+        phase = next(p for p in phases.all_phases() if p.name == "profile_hunt")
+        _run_phase(phase, {"focus": focus}, trace=trace, dry_run=dry_run, max_turns=max_turns,
+                   max_budget_usd=None, model=None, scope=scope)
+        return
+    g = graph.load_or_derive(e)
     lib = P.resolve_focus(g, focus)
     libs = P.scope_libraries(g, lib, scope)
-    workloads = P.workload_candidates(g, lib)
     from .discuss import RULES as DISCUSS_RULES
     notes = paths.notes_file(e.repo)
-    orient = [DISCUSS_RULES.format(notes=str(notes)), RULES, "## Session", "",
-              f"Focus: library {lib} in {g['libraries'][lib]['dir']}. Scope {scope}: "
-              f"{len(libs)} instrumented librar{'y' if len(libs) == 1 else 'ies'}"
-              + (": " + ", ".join(libs[:15]) + (" ..." if len(libs) > 15 else "") if len(libs) > 1 else "") + ".",
-              "Workload candidates (cheapest and most direct first):"]
-    orient += [f"  profile_run(\"{w.spec}\")  [{w.cost}]  {w.reason}" for w in workloads]
-    orient += ["", "Profiles land in " + str(P.state_dir(e.repo)) + "; profile ids are their file stems."]
-    first_message = "\n".join(orient)
+    first_message = "\n".join([DISCUSS_RULES.format(notes=str(notes)), RULES,
+                               P.session_block(e.repo, g, lib, scope, libs)])
     if dry_run:
         print(f"[dry-run] would instrument {len(libs)} dune file(s):")
         for l in libs[:40]:

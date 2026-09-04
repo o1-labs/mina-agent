@@ -13,7 +13,7 @@ from .. import agent, paths, phases
 from ..model import Phase
 
 
-def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model):
+def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model, scope="lib"):
     from .. import env as envmod, graph, profile as P
     from .profile import _report
     e = envmod.require()
@@ -27,11 +27,9 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
             typer.echo("a profiling session is already active; run mina-agent profile --restore first", err=True)
             raise typer.Exit(2)
         lib = P.resolve_focus(g, args["focus"])
-        block = [f"\n## Session\n\nFocus: library {lib} in {g['libraries'][lib]['dir']}, instrumented.",
-                 "Workload candidates (cheapest and most direct first):"]
-        block += [f"  profile_run(\"{w.spec}\")  [{w.cost}]  {w.reason}" for w in P.workload_candidates(g, lib)]
-        prompt += "\n".join(block) + "\n"
-        session = (lib, [lib])
+        libs = P.scope_libraries(g, lib, scope)
+        prompt += "\n" + P.session_block(e.repo, g, lib, scope, libs) + "\n"
+        session = (lib, libs)
     options = agent.build_options(phase, e, max_turns=max_turns, max_budget_usd=max_budget_usd,
                                   model=model)
     if dry_run:
@@ -44,7 +42,7 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
     print(f"phase {phase.name}  args {args}  log {os.path.relpath(log_path, e.repo)}\n")
     if session:
         try:
-            s = P.start(e.repo, g, session[0], "lib", session[1])
+            s = P.start(e.repo, g, session[0], scope, session[1])
         except RuntimeError as ex:
             typer.echo(f"cannot start the profiling session: {ex}", err=True)
             raise typer.Exit(2)

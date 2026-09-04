@@ -15,7 +15,12 @@ def _help(*args):
 def _commands(*args):
     """Command names from the Commands table of `--help` (not the remark text)."""
     out = _help(*args)
-    table = out[out.index("Commands"):]
+    start = out.find("Commands")
+    for panel in ("Sessions", "Headless phases", "Inspection", "Every day", "Install"):
+        i = out.find(panel)
+        if i != -1 and (start == -1 or i < start):
+            start = i
+    table = out[start:out.find("Remark") if "Remark" in out else len(out)]
     return [line.split()[1] for line in table.splitlines() if line.startswith("│ ") and len(line.split()) > 1]
 
 

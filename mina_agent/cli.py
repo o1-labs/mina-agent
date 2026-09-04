@@ -97,16 +97,18 @@ from .commands import run as run_cmd                                # noqa: E402
 
 GROUP_SETTINGS = {"no_args_is_help": True, "context_settings": {"help_option_names": ["-h", "--help"]}}
 
+S, P, I, D, A = "Sessions", "Headless phases", "Inspection", "Every day", "Install"
+
 # sessions
-app.command()(discuss.discuss)
-app.command()(develop.develop)
-app.command(epilog=profile.EXAMPLES)(profile.profile)
+app.command(rich_help_panel=S)(discuss.discuss)
+app.command(rich_help_panel=S)(develop.develop)
+app.command(epilog=profile.EXAMPLES, rich_help_panel=S)(profile.profile)
 
 # headless phases
 run = typer.Typer(help="Headless phases, one command per data/phases/*.md; each declared arg is a --option.",
                   **GROUP_SETTINGS)
 run_cmd.register(run)
-app.add_typer(run, name="run")
+app.add_typer(run, name="run", rich_help_panel=P)
 
 # inspection
 show = typer.Typer(help="Read-only inspection of the install and what the harness knows.", **GROUP_SETTINGS)
@@ -116,14 +118,14 @@ show.command()(list_.tools)
 show.command()(list_.tests)
 show.command()(list_.phases)
 show.command()(list_.libraries)
-app.add_typer(show, name="show")
-app.command(help="Alias of `show doctor`.")(doctor.doctor)
-app.command(help="Alias of `show status`.")(status.status)
+app.add_typer(show, name="show", rich_help_panel=I)
+app.command(help="Alias of `show doctor`.", rich_help_panel=I)(doctor.doctor)
+app.command(help="Alias of `show status`.", rich_help_panel=I)(status.status)
 
 # daily
-app.command()(lint.lint)
-app.command()(trace.trace)
-app.command()(dashboard.dashboard)
+app.command(rich_help_panel=D)(lint.lint)
+app.command(rich_help_panel=D)(trace.trace)
+app.command(rich_help_panel=D)(dashboard.dashboard)
 
 # install lifecycle
 admin = typer.Typer(help="Install lifecycle: setup, init, clean, derive.", **GROUP_SETTINGS)
@@ -131,7 +133,7 @@ admin.command()(setup.setup)
 admin.command()(init.init)
 admin.command()(clean.clean)
 admin.command()(derive.derive)
-app.add_typer(admin, name="admin")
+app.add_typer(admin, name="admin", rich_help_panel=A)
 
 # plumbing, referenced only from files the harness writes
 app.command("serve", hidden=True)(serve.serve)

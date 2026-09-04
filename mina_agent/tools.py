@@ -450,17 +450,16 @@ def check_dependents(library: str, timeout_s: int = 900) -> dict:
 # merlin (read-side queries against the last compiled state)
 # --------------------------------------------------------------------------
 
-def _merlin(command, path, line, col, timeout_s=60):
-    """Run `ocamlmerlin single <command>` on the file's current contents.
-    line is 1-based, col is 1-based (merlin wants 0-based columns)."""
+def _merlin_run(extra, path, timeout_s=60):
+    """Run `ocamlmerlin single` with extra args on the file's current contents,
+    fed on stdin so unsaved edits are honoured. Returns (relpath, value, clock_ms)."""
     p = rel(path)
     full = os.path.join(ENV.repo, p)
     if not os.path.isfile(full):
         raise ValueError(f"{p} is not a file")
     with open(full, encoding="utf-8", errors="replace") as fh:
         src = fh.read()
-    argv = ["ocamlmerlin", "single", command, "-position", f"{line}:{col - 1}",
-            "-filename", p]
+    argv = ["ocamlmerlin", "single"] + extra + ["-filename", p]
     with DUNE_LOCK:  # merlin asks `dune ocaml-merlin` for config
         r = ENV.run(argv, capture=True, timeout=timeout_s, input=src)
     try:
@@ -469,8 +468,12 @@ def _merlin(command, path, line, col, timeout_s=60):
         raise RuntimeError(f"merlin produced no JSON: {tail(r.stdout + r.stderr)}")
     if j.get("class") != "return":
         raise RuntimeError(f"merlin {j.get('class')}: {j.get('value')}")
-    ms = (j.get("timing") or {}).get("clock")
-    return p, j["value"], ms, j.get("notifications", [])
+    return p, j["value"], (j.get("timing") or {}).get("clock")
+
+
+def _merlin(command, path, line, col, timeout_s=60):
+    """A positioned merlin query (line/col 1-based; merlin wants 0-based columns)."""
+    return _merlin_run([command, "-position", f"{line}:{col - 1}"], path, timeout_s)
 
 
 _NOT_BUILT_HINT = ("no result; if the library has not been compiled since clone or "
@@ -481,7 +484,7 @@ def type_at(file: str, line: int, col: int) -> dict:
     """Type of the expression at file:line:col (1-based, as in build/check errors),
     plus the enclosing expressions' types. Reflects the last compiled state of
     other modules, so run check after edits to interfaces before trusting it."""
-    p, val, ms, notes = _merlin("type-enclosing", file, line, col)
+    p, val, ms = _merlin("type-enclosing", file, line, col)
     enclosing = [{"start": [v["start"]["line"], v["start"]["col"] + 1],
                   "end": [v["end"]["line"], v["end"]["col"] + 1],
                   "type": v["type"]} for v in val
@@ -495,7 +498,7 @@ def type_at(file: str, line: int, col: int) -> dict:
 def definition(file: str, line: int, col: int) -> dict:
     """Where the identifier at file:line:col is defined (1-based). Returns the
     defining file and position, or a note if merlin cannot resolve it."""
-    p, val, ms, notes = _merlin("locate", file, line, col)
+    p, val, ms = _merlin("locate", file, line, col)
     if isinstance(val, str):
         return {"file": p, "line": line, "col": col, "elapsed_ms": ms,
                 "definition": None, "note": val + "; " + _NOT_BUILT_HINT}
@@ -510,8 +513,43 @@ def definition(file: str, line: int, col: int) -> dict:
                            "col": val["pos"]["col"] + 1}}
 
 
+def errors(file: str, timeout_s: int = 60) -> dict:
+    """All syntax/type errors and warnings in file, from merlin against the last
+    compiled state (~sub-second, no rebuild, reads the file as currently edited).
+    This is the fast inner-loop check: it catches local mistakes (typos, wrong
+    arguments, non-exhaustive matches) without paying dune's per-edit recompile;
+    run check / check_dependents afterwards to confirm cross-module effects, which
+    merlin cannot see until a rebuild. If the file's library has not been compiled,
+    merlin reports phantom Unbound errors; this detects that and returns stale=true
+    with a hint to run check first, rather than a flood of false diagnostics."""
+    p, val, ms = _merlin_run(["errors"], file, timeout_s)
+    diags = []
+    for e in val:
+        st = e.get("start") or {"line": 0, "col": -1}
+        en = e.get("end") or st
+        msg = " ".join((e.get("message") or "").split())
+        kind = e.get("type", "typer")
+        diags.append({"line": st["line"], "col_start": st["col"] + 1, "col_end": en["col"] + 1,
+                      "severity": "warning" if kind == "warning" or msg.startswith("Warning") else "error",
+                      "message": msg})
+    errs = [d for d in diags if d["severity"] == "error"]
+    warns = [d for d in diags if d["severity"] == "warning"]
+    # A single Unbound is a real mistake (a name that doesn't exist yet); a pile of
+    # them means the library's .cmi files aren't built, so every reference dangles.
+    unbound = [d for d in errs if d["message"].startswith("Unbound")]
+    stale = len(unbound) >= 3 and len(unbound) >= 0.5 * len(errs)
+    out = {"file": p, "elapsed_ms": ms, "ok": not errs, "stale": stale,
+           "error_count": len(errs), "warning_count": len(warns),
+           "errors": errs[:50], "warnings": warns[:50]}
+    if stale:
+        out["note"] = ("most errors are Unbound, which usually means " + _NOT_BUILT_HINT
+                       + "; then errors reflects only real problems")
+    return out
+
+
 TOOLS = ["env_status", "build", "check", "check_dependents", "test", "test_one",
-         "tests_for", "deps_of", "dependents_of", "library_of", "type_at", "definition"]
+         "tests_for", "deps_of", "dependents_of", "library_of", "type_at", "definition",
+         "errors"]
 
 
 
@@ -544,9 +582,12 @@ def facts() -> list:
                    "hover, documentSymbol) works on .ml/.mli files and is the first choice for "
                    "navigation; type_at/definition are the merlin fallback.")
     out.append("MCP server mina-harness provides: " + ", ".join(TOOLS)
-               + ". type_at/definition describe code as last compiled; check decides whether "
-               "an edit compiles; after every Edit of a .ml/.mli file a hook runs check "
-               "automatically and returns its diagnostics. Raw dune/opam/nix/cargo/make "
+               + ". errors gives merlin's sub-second diagnostics for one file and is the fast "
+               "inner-loop check after an edit; check decides whether an edit compiles and "
+               "check_dependents whether its consumers still do (the slower, cross-module "
+               "truth); type_at/definition describe code as last compiled; after every Edit of "
+               "a .ml/.mli file a hook runs check automatically and returns its diagnostics. "
+               "Raw dune/opam/nix/cargo/make "
                "commands are denied by permission rules; checked-in scripts run normally; "
                "build-config and Rust boundary files are deny-listed for edits.")
     return out

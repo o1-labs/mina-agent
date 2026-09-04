@@ -788,8 +788,10 @@ def perf_measure(workload: str, symbol: str = "", repeats: int = 3, extra_args: 
     """Measure one workload on the working tree as it is, uncommitted edits
     included, with no instrumentation: median wall clock and peak RSS
     (/usr/bin/time), bytes allocated (the runtime's GC counters), and, with
-    `symbol` and samply installed, the share of CPU samples under any
-    function whose name contains it. extra_args are appended to the
+    `symbol` and samply installed, that function's share of the OCaml
+    threads' CPU: inclusive (withheld with a warning when stacks are
+    incomplete, the norm on macOS arm64) and leaf (self time, always valid),
+    plus stack completeness. extra_args are appended to the
     workload's argv; env is 'NAME=value ...' set for every run (how a test
     is told to use its mainnet-sized configuration). Measure before an
     edit, edit, measure again; each result is recorded under state/perf/.
@@ -810,8 +812,9 @@ def perf_compare(workload: str, base: str, head: str, symbol: str = "", repeats:
     """Measure one workload at two commits with no instrumentation, and
     report head relative to base: median wall clock and peak RSS
     (/usr/bin/time), bytes allocated (the runtime's GC counters), and, when
-    `symbol` is given and samply is installed, the share of CPU samples
-    under any function whose name contains it. workload is inline:<library>,
+    `symbol` is given and samply is installed, that function's inclusive
+    and leaf shares of the OCaml threads' CPU with stack completeness (see
+    perf_measure). workload is inline:<library>,
     test:<dir>/<name>, exe:<path.exe> or a manifest test name; base/head are
     any git refs (use the merge-base of the PR's base branch for base).
     Checks the commits out in place, builds, measures, and restores the

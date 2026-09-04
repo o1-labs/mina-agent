@@ -54,7 +54,11 @@ It is slow; call it once with the right workload, not repeatedly.
 
 3. Judge. For each claim, put the measured base, head and change beside
    the claimed before, after and change. Time claims are compared on
-   median wall clock, or on sample share when a symbol was named;
+   median wall clock, or on sample share when a symbol was named (the share
+   is CPU-weighted over the OCaml threads; if `symbol_share_pct` is None the
+   stacks were incomplete: say so and use `symbol_leaf_share_pct` of the
+   functions the change touches, or report the time claim unresolvable on
+   this machine);
    allocation claims on bytes allocated (the GC's exact count, so a claimed
    "N GB saved" should match closely); memory claims on peak RSS.
    "Recovered" means the direction matches and the magnitude is within a

@@ -60,7 +60,7 @@ def lsp(e):
     p, source = L.resolve(e)
     yield Check("ocamllsp", OK if p else NOTE, f"{p} ({source})" if p else source)
     if p:
-        gen = L.plugin_dir(e.repo)
+        gen = L.plugin_dir(e.repo) if L.has_lsp(e.repo) else None
         yield Check("lsp plugin", OK if gen else FAIL,
                     f"{gen} (passed to sessions with --plugin-dir)" if gen else "not generated; run mina-agent init")
 

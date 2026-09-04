@@ -1,7 +1,7 @@
 ---
 name: fix_bug
 allowed_tools: Read, Grep, Glob, Edit, Write, LSP, Bash(git *), Bash(gh *), Bash(mina-agent lint *), mcp__mina-harness__*
-disallowed_tools: Bash(git push *), Bash(git push), Bash(gh pr *), Bash(gh repo *), NotebookEdit, WebFetch, WebSearch, Agent, Task
+disallowed_tools: mcp__mina-harness__bug_report_file, mcp__mina-harness__bug_report_bundle, Bash(git push *), Bash(git push), Bash(gh pr *), Bash(gh repo *), NotebookEdit, WebFetch, WebSearch, Agent, Task
 permission_mode: acceptEdits
 max_turns: 80
 max_budget_usd: 20

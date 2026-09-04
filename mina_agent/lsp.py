@@ -51,21 +51,33 @@ def resolve(env):
                   f"opam install --switch={LSP_SWITCH} ocaml-lsp-server)")
 
 
-def write_plugin(repo, ocamllsp_path):
-    """Generate harness/state/plugin from data/plugin with the resolved binary."""
+def write_plugin(repo, ocamllsp_path=None):
+    """Generate <harness>/state/plugin from data/plugin: the manifest and the
+    skills always; the LSP server entry only when ocamllsp resolved."""
     out = paths.generated_plugin()
     (out / ".claude-plugin").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(paths.PLUGIN / ".claude-plugin" / "plugin.json", out / ".claude-plugin" / "plugin.json")
-    with open(paths.PLUGIN / ".lsp.json") as fh:
-        lsp = json.load(fh)
-    lsp["ocaml"]["command"] = ocamllsp_path
-    with open(out / ".lsp.json", "w") as fh:
-        json.dump(lsp, fh, indent=2)
-        fh.write("\n")
+    if (out / "skills").exists():
+        shutil.rmtree(out / "skills")
+    shutil.copytree(paths.PLUGIN / "skills", out / "skills")
+    lsp_out = out / ".lsp.json"
+    if ocamllsp_path:
+        with open(paths.PLUGIN / ".lsp.json") as fh:
+            lsp = json.load(fh)
+        lsp["ocaml"]["command"] = ocamllsp_path
+        with open(lsp_out, "w") as fh:
+            json.dump(lsp, fh, indent=2)
+            fh.write("\n")
+    elif lsp_out.exists():
+        lsp_out.unlink()
     return out
 
 
 def plugin_dir(repo):
     """The generated plugin if init produced one, else None."""
     out = paths.generated_plugin()
-    return out if (out / ".lsp.json").exists() else None
+    return out if (out / ".claude-plugin" / "plugin.json").exists() else None
+
+
+def has_lsp(repo) -> bool:
+    return (paths.generated_plugin() / ".lsp.json").exists()

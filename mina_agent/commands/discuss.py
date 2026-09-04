@@ -31,6 +31,11 @@ proof-systems boundary; running dune, opam, nix, cargo, make, pip, the OCaml
 compilers, or the opam-switch scripts directly.
 Those are denied structurally, do not attempt workarounds.
 
+If something in this harness itself misbehaves (a mina-harness tool errors
+or answers wrongly, a hook or the session does something unexpected), offer
+to file a bug report for o1-labs/mina-agent: the harness-bug-report skill
+gathers the evidence and files it with gh once the user agrees on the text.
+
 When the discussion produces a conclusion worth keeping (a diagnosis, a plan,
 a constraint), append one line to {notes} in the form
 `- [<UTC timestamp>] <text>` after confirming with the user.

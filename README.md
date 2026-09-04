@@ -45,3 +45,11 @@ session sources it. A phase declares tools it needs with `needs:` and
 variables with `env:` in its front matter and refuses to start without
 them. Commits made in any harness session are the user's own: no
 Co-Authored-By or Generated-with lines.
+
+Reporting a harness bug: in any interactive session, say what went wrong
+and the harness-bug-report skill drafts an issue for o1-labs/mina-agent,
+bundles the evidence (environment, doctor, recent run logs, lint log,
+profiling session) into a zip under the temp dir, and files it with `gh`
+once you agree on the text. Without `gh` it saves the draft and tells you
+where both files are. GitHub cannot take the zip through the API; drag it
+onto the issue in the browser.

@@ -783,10 +783,32 @@ def profile_diff(before: str, after: str = "latest", k: int = 20) -> dict:
             **L.diff(L.load(a.path), L.load(b.path), k)}
 
 
+def bug_report_bundle(runs: int = 2) -> dict:
+    """Evidence for a bug report about this harness: environment (harness and
+    Mina commits, toolchain), `mina-agent doctor` output, the last `runs`
+    headless run logs with their summaries, the lint gate log, and the active
+    profiling session. Written to a directory under the system temp dir plus
+    a zip of it; Read the files in `directory` to quote from them."""
+    from . import bugreport as B
+    return B.bundle_json(B.bundle(ENV, runs=runs))
+
+
+def bug_report_file(title: str, body: str, bundle: str = "") -> dict:
+    """File an issue on github.com/o1-labs/mina-agent with gh, after the user
+    has agreed on the exact title and body. `bundle` is the zip path from
+    bug_report_bundle; GitHub cannot take it as an attachment, so the body
+    says where it is. When gh is missing or unauthenticated the draft is
+    saved as markdown instead and `filed` is false: give the user the draft
+    path, the bundle path, and new_issue_url."""
+    from . import bugreport as B
+    return B.file_issue(title, body, bundle or None)
+
+
 TOOLS = ["env_status", "build", "check", "check_dependents", "test", "test_one",
          "tests_for", "deps_of", "dependents_of", "library_of", "find_module", "usages",
          "type_at", "definition", "errors",
-         "profile_status", "profile_run", "profile_top", "profile_callers", "profile_diff"]
+         "profile_status", "profile_run", "profile_top", "profile_callers", "profile_diff",
+         "bug_report_bundle", "bug_report_file"]
 
 
 

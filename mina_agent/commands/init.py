@@ -56,9 +56,10 @@ def init():
     print(f"git exclude: {exclude or ''} ({how})")
     from .. import lsp
     path, source = lsp.resolve(e)
+    out = lsp.write_plugin(e.repo, path)
+    print(f"plugin: {out} (skills; passed to sessions with --plugin-dir)")
     if path:
-        out = lsp.write_plugin(e.repo, path)
-        print(f"lsp: {path} ({source}) -> plugin {out} (passed to sessions with --plugin-dir)")
+        print(f"lsp: {path} ({source}) -> in the plugin")
     else:
         print(f"lsp: {source}; Claude's LSP tool unavailable, merlin tools still work")
     from .. import plugins

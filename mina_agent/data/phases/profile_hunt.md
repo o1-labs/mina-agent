@@ -2,7 +2,7 @@
 name: profile_hunt
 session: profile
 allowed_tools: Read, Grep, Glob, Edit, LSP, mcp__mina-harness__*
-disallowed_tools: Bash, Write, NotebookEdit, WebFetch, WebSearch, Agent, Task
+disallowed_tools: mcp__mina-harness__bug_report_file, mcp__mina-harness__bug_report_bundle, Bash, Write, NotebookEdit, WebFetch, WebSearch, Agent, Task
 permission_mode: acceptEdits
 max_turns: 40
 max_budget_usd: 10

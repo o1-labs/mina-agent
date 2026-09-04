@@ -96,8 +96,8 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
             dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan and first message; instrument nothing."),
             headless: bool = typer.Option(False, "--headless", help="Run the profile_hunt phase instead of the TUI: "
                                                                     "same session and walls, driven by the SDK, no prompts."),
-            max_turns: Optional[int] = typer.Option(None, "--max-turns", help="Headless only: override the phase's turn budget."),
-            trace: bool = typer.Option(False, "--trace", help="Headless only: print and save the trajectory evidence.")):
+            max_turns: Optional[int] = typer.Option(None, "--max-turns", help="Override the phase's turn budget (implies --headless)."),
+            trace: bool = typer.Option(False, "--trace", help="Print and save the trajectory evidence (implies --headless).")):
     """Start a profiling session on a library, interactive or headless.
 
     The focus libraries get a temporary landmarks stanza in their dune files
@@ -128,6 +128,9 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     if not landmarks.present(e.repo):
         d, msg = landmarks.fetch(e)
         typer.echo(f"landmarks: {d} ({msg})", err=True)
+    if (max_turns is not None or trace) and not headless:
+        typer.echo("--max-turns/--trace only apply to a headless run; running headless", err=True)
+        headless = True
     if headless:
         from .. import phases
         from .run import _run_phase

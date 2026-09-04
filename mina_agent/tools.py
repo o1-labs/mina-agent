@@ -686,7 +686,9 @@ def profile_run(workload: str, only_test: str = "", timeout_s: int = 900) -> dic
     tests; only_test narrows to file[:name]), test:<dir>/<name> (a test unit),
     exe:<path.exe>, or a manifest test name. Returns the profile id, the
     focus libraries' share of time, and the top functions by self time; use
-    profile_top / profile_callers to dig, profile_diff to compare runs."""
+    profile_top / profile_callers to dig, profile_diff to compare runs. The
+    workload's complete output is written next to the profile (`log`); test
+    failures are parsed into `failures`, so a failing run can be read in full."""
     from . import landmarks as L, profile as P
     s = _session()
     results = []
@@ -704,19 +706,23 @@ def profile_run(workload: str, only_test: str = "", timeout_s: int = 900) -> dic
         r = ENV.run(argv, capture=True, timeout=timeout_s, cwd=os.path.join(ENV.repo, "_build", "default", w.cwd))
         run_s = round(time.time() - t0, 1)
         text = (r.stdout or "") + (r.stderr or "")
+        log = path.with_suffix(".log")
+        log.write_text(text, encoding="utf-8", errors="replace")
+        failures, summary = parse_test_output(text)
         if not path.exists():
             return {"ok": False, "stage": "run", "workload": workload, "exe": w.exe, "exit_code": r.returncode,
                     "elapsed_s": run_s, "note": "the run produced no profile (crashed before exit?)",
-                    "raw_tail": text[-RAW_TAIL_BYTES:]}
+                    "log": str(log), "summary_line": summary, "failures": to_json(failures), "raw_tail": tail(text)}
         prof = L.load(path)
         focus = [f for f in prof.functions.values() if f.under(s.dirs) and f.calls > 0]
         share = round(sum(f.self_ms for f in focus) / prof.total_ms * 100, 1) if prof.total_ms else 0.0
         entry = ProfileEntry(profile=path.stem, path=str(path), workload=workload, only_test=only_test or None,
                              exe=w.exe, exit_code=r.returncode, run_s=run_s, build_s=built.elapsed_s,
                              total_ms=prof.total_ms, units=prof.units, functions=len(prof.functions),
-                             focus_functions_hit=len(focus), focus_self_share_pct=share)
+                             focus_functions_hit=len(focus), focus_self_share_pct=share, log=str(log))
         P.record_profile(ENV.repo, entry)
-        results.append(to_json(entry) | {"top_focus": L.top(prof, "self_ms", 10, s.dirs), "raw_tail": text[-1500:]})
+        results.append(to_json(entry) | {"summary_line": summary, "failures": to_json(failures),
+                                         "top_focus": L.top(prof, "self_ms", 10, s.dirs), "raw_tail": tail(text)})
     return {"ok": all(e["exit_code"] == 0 for e in results), "runs": results,
             "note": None if results and results[-1]["focus_functions_hit"] else
             "no focus-library function ran under this workload; pick one that exercises the focus"}

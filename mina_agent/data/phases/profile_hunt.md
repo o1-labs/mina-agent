@@ -42,7 +42,9 @@ You have about 40 tool calls in total. Spend them like this:
 5. If a change is clearly correct and local (an allocation avoided, a
    repeated computation hoisted, a linear scan replaced), make it with Edit,
    profile_run the same workload, and profile_diff against the earlier
-   profile. Otherwise do not edit for speculation.
+   profile. If the workload's tests fail after the change, Read the `log`
+   file profile_run returns (the run's complete output) and its parsed
+   `failures` before deciding anything. Otherwise do not edit for speculation.
 
 Reading the numbers: times are milliseconds calibrated to CPU time;
 instrumentation adds a per-call cost, so a tiny function called hundreds of

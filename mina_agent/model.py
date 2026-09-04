@@ -146,6 +146,7 @@ class ProfileEntry:
     functions: int
     focus_functions_hit: int
     focus_self_share_pct: float
+    log: str | None = None      # full stdout+stderr of the run, next to the profile
 
 
 @dataclass(frozen=True, slots=True)

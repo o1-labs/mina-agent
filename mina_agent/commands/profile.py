@@ -35,7 +35,9 @@ Method: find the code that matters and make it small enough to read.
    what costs what, with the numbers.
 5. Measure a change. After an optimization, profile_run the same workload
    and profile_diff against the earlier profile. A speedup is a measured
-   delta, never an expectation.
+   delta, never an expectation. If the workload's tests fail after a change,
+   the run's complete output is in the `log` file profile_run returns and
+   its parsed `failures`; Read the log, do not guess at the error.
 
 Before finishing: remove the windows you added (they are yours), keep any
 real optimization, and say which source files changed. The harness itself

@@ -19,9 +19,10 @@ import tomllib
 from . import env as envmod
 from . import graph as derivemod
 from . import paths
+from .diagnostics import RAW_TAIL_BYTES, parse_dune_errors, parse_test_output, split_diags, tail  # noqa: F401
+from .model import Diagnostic, DuneRun, Severity, to_json
 
 MANIFEST = str(paths.MANIFEST)
-RAW_TAIL_BYTES = 4096
 DUNE_LOCK = threading.Lock()
 
 
@@ -127,81 +128,11 @@ def unit_of(relpath):
 # dune output parsing
 # --------------------------------------------------------------------------
 
-# OCaml location header: File "f", line[s] N[-M][, characters A-B]:
-HEADER = re.compile(r'^File "(?P<file>[^"]+)", lines? (?P<line>\d+)(?:-(?P<line_end>\d+))?'
-                    r'(?:, characters (?P<col_start>\d+)-(?P<col_end>\d+))?')
-SEVERITY = re.compile(r"^(Error(?: \([^)]*\))?|Warning(?: \d+)?(?: \[[^\]]*\])?):\s*(.*)")
-
-
-def split_diags(text):
-    """(errors, warnings) from dune output."""
-    d = parse_dune_errors(text)
-    return ([e for e in d if e["severity"] == "error"],
-            [e for e in d if e["severity"] == "warning"])
-
-
-def parse_dune_errors(text):
-    """Turn dune/ocaml diagnostics into [{file,line,col_start,col_end,severity,message}]."""
-    out = []
-    cur = None
-    for line in text.splitlines():
-        m = HEADER.match(line)
-        if m:
-            if cur:
-                out.append(cur)
-            g = m.groupdict()
-            num = lambda k: int(g[k]) if g[k] is not None else None
-            cur = {"file": g["file"], "line": int(g["line"]), "line_end": num("line_end"),
-                   "col_start": num("col_start"), "col_end": num("col_end"),
-                   "severity": None, "message": ""}
-            continue
-        if cur is None:
-            continue
-        s = SEVERITY.match(line)
-        if s:
-            cur["severity"] = "error" if s.group(1).startswith("Error") else "warning"
-            cur["message"] = s.group(2).strip()
-        elif cur["severity"] and line.strip():
-            cur["message"] += " " + line.strip()
-        elif cur["severity"] and not line.strip():
-            out.append(cur)
-            cur = None
-    if cur:
-        out.append(cur)
-    return [e for e in out if e["severity"]]
-
-
-INLINE_FAIL = re.compile(r'^File "([^"]+)", line (\d+), characters [\d-]+: (.*) (?:threw|is false)')
-INLINE_SUMMARY = re.compile(r"^\d+ tests? ran, \d+ test_modules? ran")
-ALCOTEST_FAIL = re.compile(r"^\s*\[FAIL\]\s+(.*)")
-ALCOTEST_SUMMARY = re.compile(r"^\d+ failures?!|^Test Successful in|^\d+ tests? run")
-
-
-def parse_test_output(text):
-    failures, summary = [], None
-    for line in text.splitlines():
-        m = INLINE_FAIL.match(line)
-        if m:
-            failures.append({"file": m.group(1), "line": int(m.group(2)), "name": m.group(3)})
-            continue
-        m = ALCOTEST_FAIL.match(line)
-        if m:
-            failures.append({"file": None, "line": None, "name": m.group(1).strip()})
-            continue
-        if INLINE_SUMMARY.match(line) or ALCOTEST_SUMMARY.match(line):
-            summary = line.strip()
-    return failures, summary
-
-
-def tail(text):
-    return text[-RAW_TAIL_BYTES:]
-
-
 # --------------------------------------------------------------------------
 # running dune
 # --------------------------------------------------------------------------
 
-def run_dune(argv, timeout_s):
+def run_dune(argv, timeout_s) -> DuneRun:
     """Run argv through the env adapter under the dune lock."""
     if not ENV.usable:
         raise RuntimeError("no usable toolchain: " + "; ".join(ENV.reasons))
@@ -218,7 +149,14 @@ def run_dune(argv, timeout_s):
             out = ex.stdout or b""
             if isinstance(out, bytes):  # bytes even with text=True
                 out = out.decode(errors="replace")
-    return code, out, round(time.time() - t0, 1), timed_out
+    return DuneRun(code, out, round(time.time() - t0, 1), timed_out)
+
+
+def _dune_result(r: DuneRun, **fields) -> dict:
+    """The common shape of a dune-backed tool result, diagnostics serialized."""
+    errs, warns = split_diags(r.out)
+    return {"ok": r.ok, **fields, "elapsed_s": r.elapsed_s, "timed_out": r.timed_out,
+            "errors": to_json(errs), "warnings": to_json(warns), "raw_tail": tail(r.out)}
 
 
 # --------------------------------------------------------------------------
@@ -273,10 +211,7 @@ def build(target: str, timeout_s: int = 600) -> dict:
     src/lib/hex or @src/lib/hex/check or src/app/cli/src/mina.exe.
     Returns structured OCaml errors parsed from dune output."""
     t = target if target.startswith("@") else rel(target)
-    code, out, elapsed, timed_out = run_dune(["dune", "build", t], timeout_s)
-    errs, warns = split_diags(out)
-    return {"ok": code == 0, "target": t, "elapsed_s": elapsed, "timed_out": timed_out,
-            "errors": errs, "warnings": warns, "raw_tail": tail(out)}
+    return _dune_result(run_dune(["dune", "build", t], timeout_s), target=t)
 
 
 def check(path: str, timeout_s: int = 600) -> dict:
@@ -287,13 +222,9 @@ def check(path: str, timeout_s: int = 600) -> dict:
     if d is None:
         raise ValueError(f"{p} is not inside any dune directory")
     alias = f"@{d}/check"
-    code, out, elapsed, timed_out = run_dune(["dune", "build", alias], timeout_s)
-    errs, warns = split_diags(out)
     u = unit_of(p)
-    return {"ok": code == 0, "path": p, "alias": alias,
-            "library": u[1] if u and u[0] == "lib" else None,
-            "elapsed_s": elapsed, "timed_out": timed_out,
-            "errors": errs, "warnings": warns, "raw_tail": tail(out)}
+    return _dune_result(run_dune(["dune", "build", alias], timeout_s), path=p, alias=alias,
+                        library=u[1] if u and u[0] == "lib" else None)
 
 
 def test(name: str, timeout_s: int = 900) -> dict:
@@ -309,12 +240,7 @@ def test(name: str, timeout_s: int = 900) -> dict:
     # (and print its summary) even when nothing changed.
     if argv[:2] == ["dune", "build"] and "--force" not in argv:
         argv.insert(2, "--force")
-    code, out, elapsed, timed_out = run_dune(argv, timeout_s)
-    errs, warns = split_diags(out)
-    failures, summary = parse_test_output(out)
-    return {"ok": code == 0, "name": name, "command": argv, "cost": t["cost"],
-            "elapsed_s": elapsed, "timed_out": timed_out, "summary_line": summary,
-            "failures": failures, "build_errors": errs, "build_warnings": warns, "raw_tail": tail(out)}
+    return _test_result(run_dune(argv, timeout_s), name=name, command=argv, cost=t["cost"])
 
 
 def test_one(file: str, test_name: str = "", timeout_s: int = 900) -> dict:
@@ -322,12 +248,15 @@ def test_one(file: str, test_name: str = "", timeout_s: int = 900) -> dict:
     test_name matches the string after `let%test "..."`; empty runs all blocks in the file."""
     f = rel(file)
     argv = ["bash", "scripts/testone.sh", f] + ([test_name] if test_name else [])
-    code, out, elapsed, timed_out = run_dune(argv, timeout_s)
-    errs, warns = split_diags(out)
-    failures, summary = parse_test_output(out)
-    return {"ok": code == 0, "file": f, "test_name": test_name or None, "command": argv,
-            "elapsed_s": elapsed, "timed_out": timed_out, "summary_line": summary,
-            "failures": failures, "build_errors": errs, "build_warnings": warns, "raw_tail": tail(out)}
+    return _test_result(run_dune(argv, timeout_s), file=f, test_name=test_name or None, command=argv)
+
+
+def _test_result(r: DuneRun, **fields) -> dict:
+    errs, warns = split_diags(r.out)
+    failures, summary = parse_test_output(r.out)
+    return {"ok": r.ok, **fields, "elapsed_s": r.elapsed_s, "timed_out": r.timed_out,
+            "summary_line": summary, "failures": to_json(failures),
+            "build_errors": to_json(errs), "build_warnings": to_json(warns), "raw_tail": tail(r.out)}
 
 
 def tests_for(path: str) -> dict:
@@ -545,10 +474,7 @@ def check_dependents(library: str, timeout_s: int = 900) -> dict:
     if not aliases:
         return {"ok": True, "library": name, "checked": [], "elapsed_s": 0,
                 "errors": [], "raw_tail": ""}
-    code, out, elapsed, timed_out = run_dune(["dune", "build"] + aliases, timeout_s)
-    errs, warns = split_diags(out)
-    return {"ok": code == 0, "library": name, "checked": deps, "elapsed_s": elapsed,
-            "timed_out": timed_out, "errors": errs, "warnings": warns, "raw_tail": tail(out)}
+    return _dune_result(run_dune(["dune", "build"] + aliases, timeout_s), library=name, checked=deps)
 
 
 # --------------------------------------------------------------------------
@@ -628,24 +554,23 @@ def errors(file: str, timeout_s: int = 60) -> dict:
     merlin reports phantom Unbound errors; this detects that and returns stale=true
     with a hint to run check first, rather than a flood of false diagnostics."""
     p, val, ms = _merlin_run(["errors"], file, timeout_s)
-    diags = []
+    diags: list[Diagnostic] = []
     for e in val:
         st = e.get("start") or {"line": 0, "col": -1}
         en = e.get("end") or st
         msg = " ".join((e.get("message") or "").split())
-        kind = e.get("type", "typer")
-        diags.append({"line": st["line"], "col_start": st["col"] + 1, "col_end": en["col"] + 1,
-                      "severity": "warning" if kind == "warning" or msg.startswith("Warning") else "error",
-                      "message": msg})
-    errs = [d for d in diags if d["severity"] == "error"]
-    warns = [d for d in diags if d["severity"] == "warning"]
+        warning = e.get("type", "typer") == "warning" or msg.startswith("Warning")
+        diags.append(Diagnostic(file=p, line=st["line"], col_start=st["col"] + 1, col_end=en["col"] + 1,
+                                severity=Severity.WARNING if warning else Severity.ERROR, message=msg))
+    errs = [d for d in diags if d.severity is Severity.ERROR]
+    warns = [d for d in diags if d.severity is Severity.WARNING]
     # A single Unbound is a real mistake (a name that doesn't exist yet); a pile of
     # them means the library's .cmi files aren't built, so every reference dangles.
-    unbound = [d for d in errs if d["message"].startswith("Unbound")]
+    unbound = [d for d in errs if d.message.startswith("Unbound")]
     stale = len(unbound) >= 3 and len(unbound) >= 0.5 * len(errs)
     out = {"file": p, "elapsed_ms": ms, "ok": not errs, "stale": stale,
            "error_count": len(errs), "warning_count": len(warns),
-           "errors": errs[:50], "warnings": warns[:50]}
+           "errors": to_json(errs[:50]), "warnings": to_json(warns[:50])}
     if stale:
         out["note"] = ("most errors are Unbound, which usually means " + _NOT_BUILT_HINT
                        + "; then errors reflects only real problems")
@@ -767,11 +692,10 @@ def profile_run(workload: str, only_test: str = "", timeout_s: int = 900) -> dic
     runs = P.resolve_workload(GRAPH.get(), manifest_tests(), workload)
     results = []
     for target, exe, exe_args, cwd in runs:
-        code, out, elapsed, timed_out = run_dune(["dune", "build", target], timeout_s)
-        if code != 0:
-            errs, _ = split_diags(out)
+        built = run_dune(["dune", "build", target], timeout_s)
+        if not built.ok:
             return {"ok": False, "stage": "build", "workload": workload, "target": target,
-                    "errors": errs, "raw_tail": tail(out)}
+                    "errors": to_json(split_diags(built.out)[0]), "raw_tail": tail(built.out)}
         path = P.next_profile_path(ENV.repo, workload)
         argv = ["env", f"OCAML_LANDMARKS=format=json,output={path},allocation,time",
                 os.path.join(ENV.repo, "_build", "default", exe)] + exe_args
@@ -790,7 +714,7 @@ def profile_run(workload: str, only_test: str = "", timeout_s: int = 900) -> dic
                  if any(f["location"].startswith(d + "/") for d in s["dirs"]) and f["calls"] > 0]
         share = round(sum(f["self_ms"] for f in focus) / prof["total_ms"] * 100, 1) if prof["total_ms"] else 0.0
         entry = {"profile": path.stem, "path": str(path), "workload": workload, "only_test": only_test or None,
-                 "exe": exe, "exit_code": r.returncode, "run_s": run_s, "build_s": elapsed,
+                 "exe": exe, "exit_code": r.returncode, "run_s": run_s, "build_s": built.elapsed_s,
                  "total_ms": prof["total_ms"], "units": prof["units"], "functions": len(prof["functions"]),
                  "focus_functions_hit": len(focus), "focus_self_share_pct": share}
         P.record_profile(ENV.repo, entry)
@@ -932,12 +856,12 @@ File "src/lib/currency/currency.ml", line 1240, characters 6-40: broken threw (F
 def selftest():
     errs = parse_dune_errors(SAMPLE_ERR)
     assert len(errs) == 3, errs
-    assert errs[0]["line"] == 1 and errs[0]["col_start"] == 14 and errs[0]["severity"] == "error"
-    assert "expected of type int" in errs[0]["message"], errs[0]
-    assert errs[1]["severity"] == "error" and "unused value baz" in errs[1]["message"]
-    assert errs[2]["file"].endswith("dune") and errs[2]["col_start"] == 12
+    assert errs[0].line == 1 and errs[0].col_start == 14 and errs[0].severity is Severity.ERROR
+    assert "expected of type int" in errs[0].message, errs[0]
+    assert errs[1].severity is Severity.ERROR and "unused value baz" in errs[1].message
+    assert errs[2].file.endswith("dune") and errs[2].col_start == 12
     f, s = parse_test_output(SAMPLE_TEST)
-    assert f == [{"file": "src/lib/currency/currency.ml", "line": 1240, "name": "broken"}], f
+    assert [(x.file, x.line, x.name) for x in f] == [("src/lib/currency/currency.ml", 1240, "broken")], f
     assert s == "14 tests ran, 3 test_modules ran"
     assert rel(os.path.join(ENV.repo, "src/lib/hex")) == "src/lib/hex"
     try:

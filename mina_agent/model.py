@@ -60,6 +60,7 @@ class DuneRun(NamedTuple):
 
 @dataclass(frozen=True, slots=True)
 class TestFailure:
+    __test__ = False        # keep pytest from collecting it
     name: str
     file: str | None = None
     line: int | None = None

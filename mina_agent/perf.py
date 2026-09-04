@@ -159,22 +159,25 @@ def _safe(s: str) -> str:
 
 
 def measure_current(env, g, manifest_tests, workload: str, *, symbol: str | None = None, repeats: int = 3,
-                    run_dune, timeout_s: int = 1800, extra_args=(), extra_env=None) -> tuple[PerfRun, str]:
-    """Measure the working tree as it is (uncommitted edits included) and
-    record the result under state/perf/. Returns (run, record path)."""
+                    run_dune, timeout_s: int = 1800, extra_args=(), extra_env=None,
+                    label: str | None = None, out_dir: Path | None = None) -> tuple[PerfRun, str]:
+    """Measure the checkout as it is (uncommitted edits included) and record
+    the result as JSON under state/perf/. Returns (run, record path).
+    `label` names the run (default: HEAD, or worktree when the tree is
+    dirty); `out_dir` lets several measurements share one directory."""
     if P.active(env.repo):
         raise RuntimeError("a profiling session is active (builds would be instrumented); run mina-agent profile --restore first")
     runs = P.resolve_workload(g, manifest_tests, workload)
     if len(runs) != 1:
         raise ValueError(f"{workload} resolves to {len(runs)} executables; give one (test:<dir>/<name> or exe:<path>)")
-    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    out_dir = paths.state_dir() / "perf" / stamp
+    dirty = bool(_git(env.repo, "status", "--porcelain", "--untracked-files=no"))
+    label = label or ("worktree" if dirty else "HEAD")
+    out_dir = out_dir or paths.state_dir() / "perf" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     out_dir.mkdir(parents=True, exist_ok=True)
-    dirty = bool(_git(repo := env.repo, "status", "--porcelain", "--untracked-files=no"))
-    r = measure(env, runs[0], "worktree" if dirty else "HEAD", symbol=symbol, repeats=repeats, out_dir=out_dir,
-                run_dune=run_dune, timeout_s=timeout_s, extra_args=extra_args, extra_env=extra_env)
+    r = measure(env, runs[0], label, symbol=symbol, repeats=repeats, out_dir=out_dir, run_dune=run_dune,
+                timeout_s=timeout_s, extra_args=extra_args, extra_env=extra_env)
     from .model import to_json
-    rec = out_dir / "measure.json"
+    rec = out_dir / f"measure-{_safe(label)}.json"
     rec.write_text(json.dumps({"workload": workload, "symbol": symbol, "dirty_tree": dirty, "extra_args": list(extra_args),
                                "extra_env": dict(extra_env or {}), "run": to_json(r)}, indent=1))
     return r, str(rec)
@@ -182,34 +185,30 @@ def measure_current(env, g, manifest_tests, workload: str, *, symbol: str | None
 
 def compare(env, g, manifest_tests, workload: str, base: str, head: str, *, symbol: str | None = None,
             repeats: int = 3, run_dune, timeout_s: int = 1800, extra_args=(), extra_env=None) -> PerfCompare:
-    """Measure `workload` at `base` then `head`, restoring the original checkout."""
+    """measure_current at `base`, then at `head`, restoring the original
+    checkout afterwards. Only the git choreography lives here."""
     repo = env.repo
     if _git(repo, "status", "--porcelain", "--untracked-files=no"):
         raise RuntimeError("the working tree has uncommitted changes; commit or stash them before comparing")
-    if P.active(repo):
-        raise RuntimeError("a profiling session is active (builds would be instrumented); run mina-agent profile --restore first")
-    base_sha, head_sha = _git(repo, "rev-parse", "--verify", base + "^{commit}"), _git(repo, "rev-parse", "--verify", head + "^{commit}")
+    base_sha = _git(repo, "rev-parse", "--verify", base + "^{commit}")
+    head_sha = _git(repo, "rev-parse", "--verify", head + "^{commit}")
     original = _git(repo, "branch", "--show-current") or _git(repo, "rev-parse", "HEAD")
-    runs = P.resolve_workload(g, manifest_tests, workload)
-    if len(runs) != 1:
-        raise ValueError(f"{workload} resolves to {len(runs)} executables; give one (test:<dir>/<name> or exe:<path>)")
-    w = runs[0]
     out_dir = paths.state_dir() / "perf" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     def checkout(sha):
         if _git(repo, "rev-parse", "HEAD") != sha:
             _git(repo, "switch", "--detach", "--quiet", sha)
             subprocess.run(["git", "submodule", "update", "--recursive", "--quiet"], cwd=repo, capture_output=True)
 
+    def at(sha, label):
+        checkout(sha)
+        return measure_current(env, g, manifest_tests, workload, symbol=symbol, repeats=repeats, run_dune=run_dune,
+                               timeout_s=timeout_s, extra_args=extra_args, extra_env=extra_env,
+                               label=label, out_dir=out_dir)[0]
+
     try:
-        def one(ref):
-            return measure(env, w, ref, symbol=symbol, repeats=repeats, out_dir=out_dir, run_dune=run_dune,
-                           timeout_s=timeout_s, extra_args=extra_args, extra_env=extra_env)
-        checkout(base_sha)
-        b = one(base)
-        checkout(head_sha)
-        h = one(head)
+        b = at(base_sha, base)
+        h = at(head_sha, head)
     finally:
         _git(repo, "switch", "--quiet", *(("--detach", original) if re.fullmatch(r"[0-9a-f]{40}", original) else (original,)))
         subprocess.run(["git", "submodule", "update", "--recursive", "--quiet"], cwd=repo, capture_output=True)

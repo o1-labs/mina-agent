@@ -143,6 +143,13 @@ def linters(e):
     yield Check("dhall", OK if ok else NOTE, detail)
 
 
+def perf_tools(e):
+    from .. import perf
+    t = perf.tools_available()
+    yield Check("samply", OK if t["samply"] else NOTE,
+                t["samply"] or "not installed (cargo install samply); verify-perf measures time and allocation without it, not sample shares")
+
+
 def github(e):
     """fix-bug reads issues with gh, authenticated however the session env
     provides it: `gh auth login` (keyring) or GH_TOKEN from harness/.envrc."""
@@ -171,7 +178,7 @@ def notes(e):
 
 
 CHECKS = [toolchain, binaries, lsp, opam_export, graph, session_config, no_leakage, git_hook, linters,
-          github, external_plugins, notes]
+          perf_tools, github, external_plugins, notes]
 
 
 def render(checks):

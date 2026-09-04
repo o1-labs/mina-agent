@@ -783,6 +783,24 @@ def profile_diff(before: str, after: str = "latest", k: int = 20) -> dict:
             **L.diff(L.load(a.path), L.load(b.path), k)}
 
 
+def perf_compare(workload: str, base: str, head: str, symbol: str = "", repeats: int = 3,
+                 timeout_s: int = 1800) -> dict:
+    """Measure one workload at two commits with no instrumentation, and
+    report head relative to base: median wall clock and peak RSS
+    (/usr/bin/time), bytes allocated (the runtime's GC counters), and, when
+    `symbol` is given and samply is installed, the share of CPU samples
+    under any function whose name contains it. workload is inline:<library>,
+    test:<dir>/<name>, exe:<path.exe> or a manifest test name; base/head are
+    any git refs (use the merge-base of the PR's base branch for base).
+    Checks the commits out in place, builds, measures, and restores the
+    original branch; refuses on a dirty tree or an active profiling session.
+    Slow: two builds plus (repeats + 2) runs each."""
+    from . import perf
+    c = perf.compare(ENV, GRAPH.get(), manifest_tests(), workload, base, head, symbol=symbol or None,
+                     repeats=repeats, run_dune=run_dune, timeout_s=timeout_s)
+    return to_json(c) | {"deltas": perf.deltas(c)}
+
+
 def bug_report_bundle(runs: int = 2) -> dict:
     """Evidence for a bug report about this harness: environment (harness and
     Mina commits, toolchain), `mina-agent doctor` output, the last `runs`
@@ -808,7 +826,7 @@ TOOLS = ["env_status", "build", "check", "check_dependents", "test", "test_one",
          "tests_for", "deps_of", "dependents_of", "library_of", "find_module", "usages",
          "type_at", "definition", "errors",
          "profile_status", "profile_run", "profile_top", "profile_callers", "profile_diff",
-         "bug_report_bundle", "bug_report_file"]
+         "bug_report_bundle", "bug_report_file", "perf_compare"]
 
 
 

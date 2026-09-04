@@ -217,3 +217,54 @@ class Profile:
     total_ms: float
     nodes: int
     functions: dict[str, FunctionStats]  # key: "name @ file:line"
+
+
+# --------------------------------------------------------------------------
+# performance comparison (uninstrumented, "God's eye" measurements)
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class GcStats:
+    """OCAMLRUNPARAM=v=0x400 counters at exit, in words (8 bytes each)."""
+    allocated_words: int
+    minor_words: int
+    promoted_words: int
+    major_words: int
+    top_heap_words: int
+
+    @property
+    def allocated_bytes(self) -> int:
+        return self.allocated_words * 8
+
+
+@dataclass(frozen=True, slots=True)
+class PerfRun:
+    """One ref measured on one workload."""
+    ref: str
+    sha: str
+    build_s: float
+    wall_s: tuple[float, ...]           # one per repeat, /usr/bin/time
+    max_rss_bytes: int | None           # peak resident set, largest over repeats
+    gc: GcStats | None
+    samples_total: int | None           # samply, when a symbol was asked for
+    samples_symbol: int | None
+    symbol_share_pct: float | None
+    profile: str | None                 # samply profile path
+    exit_codes: tuple[int, ...]
+
+    @property
+    def wall_median_s(self) -> float | None:
+        if not self.wall_s:
+            return None
+        s = sorted(self.wall_s)
+        return s[len(s) // 2]
+
+
+@dataclass(frozen=True, slots=True)
+class PerfCompare:
+    workload: str
+    symbol: str | None
+    base: PerfRun
+    head: PerfRun
+    restored_to: str
+    tools: dict[str, str | None]        # which measurement tools were available

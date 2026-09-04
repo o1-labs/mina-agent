@@ -53,3 +53,10 @@ profiling session) into a zip under the temp dir, and files it with `gh`
 once you agree on the text. Without `gh` it saves the draft and tells you
 where both files are. GitHub cannot take the zip through the API; drag it
 onto the issue in the browser.
+
+Verifying a PR's performance claims: `mina-agent verify-perf --pr <number>`
+reads the PR, locates the workload it says it measured (and stops if it
+does not say), then measures base and head with no instrumentation:
+/usr/bin/time for wall clock and peak RSS, the runtime's GC counters for
+bytes allocated, and samply for the share of samples under a named
+function. It reports whether the claimed numbers roughly recover.

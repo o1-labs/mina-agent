@@ -783,8 +783,30 @@ def profile_diff(before: str, after: str = "latest", k: int = 20) -> dict:
             **L.diff(L.load(a.path), L.load(b.path), k)}
 
 
-def perf_compare(workload: str, base: str, head: str, symbol: str = "", repeats: int = 3,
+def perf_measure(workload: str, symbol: str = "", repeats: int = 3, extra_args: str = "", env: str = "",
                  timeout_s: int = 1800) -> dict:
+    """Measure one workload on the working tree as it is, uncommitted edits
+    included, with no instrumentation: median wall clock and peak RSS
+    (/usr/bin/time), bytes allocated (the runtime's GC counters), and, with
+    `symbol` and samply installed, the share of CPU samples under any
+    function whose name contains it. extra_args are appended to the
+    workload's argv; env is 'NAME=value ...' set for every run (how a test
+    is told to use its mainnet-sized configuration). Measure before an
+    edit, edit, measure again; each result is recorded under state/perf/.
+    Refuses while a profiling session is active."""
+    import shlex
+    from . import perf
+    r, rec = perf.measure_current(ENV, GRAPH.get(), manifest_tests(), workload, symbol=symbol or None, repeats=repeats,
+                                  run_dune=run_dune, timeout_s=timeout_s, extra_args=shlex.split(extra_args),
+                                  extra_env=perf.parse_env(env))
+    d = to_json(r)
+    return d | {"wall_median_s": r.wall_median_s, "allocated_gb": round(r.gc.allocated_bytes / 1e9, 3) if r.gc else None,
+                "max_rss_mb": round(r.max_rss_bytes / 1e6, 1) if r.max_rss_bytes else None, "record": rec,
+                "tools": perf.tools_available()}
+
+
+def perf_compare(workload: str, base: str, head: str, symbol: str = "", repeats: int = 3, extra_args: str = "",
+                 env: str = "", timeout_s: int = 1800) -> dict:
     """Measure one workload at two commits with no instrumentation, and
     report head relative to base: median wall clock and peak RSS
     (/usr/bin/time), bytes allocated (the runtime's GC counters), and, when
@@ -794,10 +816,13 @@ def perf_compare(workload: str, base: str, head: str, symbol: str = "", repeats:
     any git refs (use the merge-base of the PR's base branch for base).
     Checks the commits out in place, builds, measures, and restores the
     original branch; refuses on a dirty tree or an active profiling session.
-    Slow: two builds plus (repeats + 2) runs each."""
+    extra_args and env as in perf_measure. Slow: two builds plus
+    (repeats + 2) runs each."""
+    import shlex
     from . import perf
     c = perf.compare(ENV, GRAPH.get(), manifest_tests(), workload, base, head, symbol=symbol or None,
-                     repeats=repeats, run_dune=run_dune, timeout_s=timeout_s)
+                     repeats=repeats, run_dune=run_dune, timeout_s=timeout_s, extra_args=shlex.split(extra_args),
+                     extra_env=perf.parse_env(env))
     return to_json(c) | {"deltas": perf.deltas(c)}
 
 
@@ -826,7 +851,7 @@ TOOLS = ["env_status", "build", "check", "check_dependents", "test", "test_one",
          "tests_for", "deps_of", "dependents_of", "library_of", "find_module", "usages",
          "type_at", "definition", "errors",
          "profile_status", "profile_run", "profile_top", "profile_callers", "profile_diff",
-         "bug_report_bundle", "bug_report_file", "perf_compare"]
+         "bug_report_bundle", "bug_report_file", "perf_measure", "perf_compare"]
 
 
 

@@ -33,6 +33,11 @@ push, rebase, reset or amend unless the user asks in this session.
 What is not possible here: editing build configuration or the Rust
 proof-systems boundary. Those are denied structurally.
 
+To measure performance (is this faster, where does the time or allocation
+go, does a claim hold), use the benchmarking skill: it chooses between the
+uninstrumented tools (perf_measure, perf_compare: samply sample share,
+exact allocation, peak RSS, wall clock) and a landmarks profiling session.
+
 If something in this harness itself misbehaves, offer to file a bug report
 for o1-labs/mina-agent (the harness-bug-report skill).
 

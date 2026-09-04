@@ -67,3 +67,9 @@ a hook (git, gh, `mina-agent lint/list/status/doctor`, read-only utilities;
 the list is `[develop]` in `manifest.toml`, grow it as needed). The raw
 toolchain and build configuration stay walled; building and testing go
 through the harness tools.
+
+Benchmarking: in a develop (or discuss) session the `benchmarking` skill
+picks the instrument for the question: `perf_measure` on the working tree
+or `perf_compare` between commits for samply sample shares, exact
+allocation, peak RSS and wall clock, or a landmarks profiling session for
+per-function attribution. Results are recorded under `state/perf/`.

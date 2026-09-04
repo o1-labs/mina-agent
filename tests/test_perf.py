@@ -37,3 +37,11 @@ def test_symbol_share(tmp_path):
     assert perf.symbol_share(str(p), str(s), "X__f") == (3, 4)     # f on stacks 0 and 1
     assert perf.symbol_share(str(p), str(s), "X__g") == (2, 4)
     assert perf.symbol_share(str(p), str(s), "nope") == (0, 4)
+
+
+def test_parse_env():
+    assert perf.parse_env("A=1 B='two words' C=") == {"A": "1", "B": "two words", "C": ""}
+    assert perf.parse_env("") == {}
+    import pytest
+    with pytest.raises(ValueError):
+        perf.parse_env("not-a-pair")

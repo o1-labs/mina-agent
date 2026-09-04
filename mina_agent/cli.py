@@ -63,7 +63,7 @@ def _main(ctx: typer.Context,
 
 # ── register commands ─────────────────────────────────────────────────
 
-from .commands import setup, init, doctor, status, discuss, trace, lint, dashboard, review  # noqa: E402
+from .commands import setup, init, doctor, status, discuss, trace, lint, dashboard  # noqa: E402
 from .commands import serve, hook, exec_, derive, list_            # noqa: E402
 from .commands import run as run_cmd                                # noqa: E402
 
@@ -75,7 +75,6 @@ app.command()(discuss.discuss)
 app.command()(trace.trace)
 app.command()(lint.lint)
 app.command()(dashboard.dashboard)
-app.command()(review.review)
 run_cmd.register(app)                       # one command per data/phases/*.md
 app.command("serve", hidden=True)(serve.serve)
 app.add_typer(hook.app, name="hook", hidden=True)

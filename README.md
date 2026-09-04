@@ -15,8 +15,8 @@ repo's Claude settings, so plain `claude` sessions are unaffected.
     mina-agent --help
 
 The tool lives in uv's tool directory, not in the checkout, so it survives
-checking out branches that predate `harness/` (which `review --checkout`
-does). Reinstall after changing the harness source.
+checking out branches that predate `harness/`. Reinstall after changing the
+harness source.
 
 Every command answers `--help`. Listings of tools, tests, and phases are
 derived, not documented: `mina-agent list tools|tests|phases`.

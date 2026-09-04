@@ -33,6 +33,12 @@ def setup():
     print(f"describe-dune built: {tool}")
     from .. import usages
     print(f"usages built: {usages.build_tool(e)}")
+    from .. import landmarks
+    try:
+        d, msg = landmarks.fetch(e)
+        print(f"landmarks     ok  {d} ({msg})")
+    except RuntimeError as ex:
+        print(f"landmarks     MISSING  {ex} (mina-agent profile will retry the fetch)")
     d = graph.derive_and_write(e)
     print(f"graph: {graph.summary(d)}")
     print("next: mina-agent init")

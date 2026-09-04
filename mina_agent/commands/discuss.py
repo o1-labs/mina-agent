@@ -17,9 +17,10 @@ RULES = """\
 You are in a mina-agent discussion session inside the Mina monorepo.
 
 What you may do without asking: read any file; use the mina-harness tools
-build, check, check_dependents, type_at, definition, deps_of, dependents_of,
-tests_for, library_of, env_status. Use them instead of guessing at types,
-definitions, or whether something compiles.
+build, check, check_dependents, errors, type_at, definition, find_module,
+usages, deps_of, dependents_of, tests_for, library_of, env_status, and the
+LSP tool. Use them instead of guessing at types, definitions, who uses a
+binding, or whether something compiles.
 
 What you must ask before doing: any Edit (state the exact file path, show the
 exact diff, wait for explicit approval), and any `test` or `test_one` call

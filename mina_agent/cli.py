@@ -25,7 +25,8 @@ Typical workflow:
   6. mina-agent trace <log>       trajectory evidence for any past run
   7. mina-agent lint              CI's lint jobs on the staged files (also the git pre-commit hook)
   8. mina-agent dashboard --open  live browser view of runs, hooks, denials, and the lint gate
-  9. mina-agent clean             remove everything generated (harness/state); setup + init rebuild it
+  9. mina-agent profile --focus <library>   profiling session: instrumented build, ranked hotspots, zoom
+ 10. mina-agent clean             remove everything generated (harness/state); setup + init rebuild it
 
 Run mina-agent <command> --help for details."""
 
@@ -64,7 +65,7 @@ def _main(ctx: typer.Context,
 
 # ── register commands ─────────────────────────────────────────────────
 
-from .commands import setup, init, doctor, status, discuss, trace, lint, dashboard, clean  # noqa: E402
+from .commands import setup, init, doctor, status, discuss, trace, lint, dashboard, clean, profile  # noqa: E402
 from .commands import serve, hook, exec_, derive, list_            # noqa: E402
 from .commands import run as run_cmd                                # noqa: E402
 
@@ -76,6 +77,7 @@ app.command()(discuss.discuss)
 app.command()(trace.trace)
 app.command()(lint.lint)
 app.command()(dashboard.dashboard)
+app.command()(profile.profile)
 app.command()(clean.clean)
 run_cmd.register(app)                       # one command per data/phases/*.md
 app.command("serve", hidden=True)(serve.serve)

@@ -88,6 +88,13 @@ def graph(e):
     ub = paths.usages_bin(e.repo)
     yield Check("usages", OK if ub.exists() else FAIL,
                 str(ub) if ub.exists() else "not built (reads .cmt typed trees for the usages tool); run mina-agent setup")
+    from .. import landmarks, profile as P
+    ok, detail = landmarks.status(e.repo)
+    yield Check("landmarks", OK if ok else NOTE, detail)
+    if P.active(e.repo):
+        s = P.load(e.repo)
+        yield Check("profiling session", NOTE, f"active since {s['started']} on {s['focus']} "
+                    f"({len(s['injected'])} dune files instrumented); mina-agent profile --restore ends it")
 
 
 def session_config(e):

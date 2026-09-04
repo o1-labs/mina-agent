@@ -216,6 +216,8 @@ def run_dune(argv, timeout_s):
     """Run argv through the env adapter under the dune lock."""
     if ENV.mode == "none":
         raise RuntimeError("no usable toolchain: " + "; ".join(ENV.reasons))
+    from . import profile as P
+    argv = P.dune_argv(ENV.repo, argv)   # --instrument-with landmarks while a profiling session is active
     t0 = time.time()
     with DUNE_LOCK:
         try:
@@ -731,9 +733,134 @@ def usages(file: str, line: int, col: int, timeout_s: int = 120) -> dict:
     return out
 
 
+# --------------------------------------------------------------------------
+# profiling (active only inside `mina-agent profile`)
+# --------------------------------------------------------------------------
+
+def _session():
+    from . import profile as P
+    s = P.load(ENV.repo)
+    if s is None:
+        raise RuntimeError("no active profiling session; start one with mina-agent profile --focus <library>")
+    return s
+
+
+def _profile_path(s, profile):
+    if not s["profiles"]:
+        raise ValueError("no profiles recorded yet; run profile_run first")
+    if profile in ("", "latest"):
+        return s["profiles"][-1]
+    for p in s["profiles"]:
+        if p["profile"] == profile or p["profile"].startswith(profile):
+            return p
+    raise ValueError(f"unknown profile {profile!r}; recorded: " + ", ".join(p["profile"] for p in s["profiles"]))
+
+
+def profile_status() -> dict:
+    """The active profiling session: focus, instrumented libraries, profiles
+    recorded so far. Errors when no session is active."""
+    s = _session()
+    return {k: s[k] for k in ("started", "focus", "scope", "libraries", "dirs", "skipped")} | \
+        {"injected_dune_files": sorted(s["injected"]), "profiles": s["profiles"]}
+
+
+def profile_run(workload: str, only_test: str = "", timeout_s: int = 900) -> dict:
+    """Build the workload with the in-scope libraries instrumented and run it
+    under the landmarks profiler. workload: inline:<library> (its inline
+    tests; only_test narrows to file[:name]), test:<dir>/<name> (a test unit),
+    exe:<path.exe>, or a manifest test name. Returns the profile id, the
+    focus libraries' share of time, and the top functions by self time; use
+    profile_top / profile_callers to dig, profile_diff to compare runs."""
+    from . import landmarks as L, profile as P
+    s = _session()
+    runs = P.resolve_workload(GRAPH.get(), manifest_tests(), workload)
+    results = []
+    for target, exe, exe_args, cwd in runs:
+        code, out, elapsed, timed_out = run_dune(["dune", "build", target], timeout_s)
+        if code != 0:
+            errs, _ = split_diags(out)
+            return {"ok": False, "stage": "build", "workload": workload, "target": target,
+                    "errors": errs, "raw_tail": tail(out)}
+        path = P.next_profile_path(ENV.repo, workload)
+        argv = ["env", f"OCAML_LANDMARKS=format=json,output={path},allocation,time",
+                os.path.join(ENV.repo, "_build", "default", exe)] + exe_args
+        if only_test and exe_args:
+            argv += ["-only-test", only_test]
+        t0 = time.time()
+        r = ENV.run(argv, capture=True, timeout=timeout_s, cwd=os.path.join(ENV.repo, "_build", "default", cwd))
+        run_s = round(time.time() - t0, 1)
+        text = (r.stdout or "") + (r.stderr or "")
+        if not path.exists():
+            return {"ok": False, "stage": "run", "workload": workload, "exe": exe, "exit_code": r.returncode,
+                    "elapsed_s": run_s, "note": "the run produced no profile (crashed before exit?)",
+                    "raw_tail": text[-RAW_TAIL_BYTES:]}
+        prof = L.load(path)
+        focus = [f for f in prof["functions"].values()
+                 if any(f["location"].startswith(d + "/") for d in s["dirs"]) and f["calls"] > 0]
+        share = round(sum(f["self_ms"] for f in focus) / prof["total_ms"] * 100, 1) if prof["total_ms"] else 0.0
+        entry = {"profile": path.stem, "path": str(path), "workload": workload, "only_test": only_test or None,
+                 "exe": exe, "exit_code": r.returncode, "run_s": run_s, "build_s": elapsed,
+                 "total_ms": prof["total_ms"], "units": prof["units"], "functions": len(prof["functions"]),
+                 "focus_functions_hit": len(focus), "focus_self_share_pct": share}
+        P.record_profile(ENV.repo, entry)
+        results.append(entry | {"top_focus": L.top(prof, "self_ms", 10, s["dirs"]),
+                                "raw_tail": text[-1500:]})
+    return {"ok": all(e["exit_code"] == 0 for e in results), "runs": results,
+            "note": None if results and results[-1]["focus_functions_hit"] else
+            "no focus-library function ran under this workload; pick one that exercises the focus"}
+
+
+def profile_top(profile: str = "latest", by: str = "self_ms", k: int = 15, scope: str = "focus") -> dict:
+    """Ranked functions of a recorded profile. by: self_ms, total_ms, calls,
+    self_alloc_mb, alloc_mb. scope: focus (instrumented libraries only) or all.
+    Self figures exclude callees; total includes them."""
+    from . import landmarks as L
+    s = _session()
+    p = _profile_path(s, profile)
+    if by not in ("self_ms", "total_ms", "calls", "self_alloc_mb", "alloc_mb"):
+        raise ValueError("by must be one of self_ms, total_ms, calls, self_alloc_mb, alloc_mb")
+    prof = L.load(p["path"])
+    return {"profile": p["profile"], "workload": p["workload"], "total_ms": prof["total_ms"], "units": prof["units"],
+            "by": by, "rows": L.top(prof, by, k, s["dirs"] if scope == "focus" else None)}
+
+
+def profile_callers(function: str, profile: str = "latest") -> dict:
+    """Who calls a function and what it calls, with time under each edge, in
+    a recorded profile. function matches a substring of "name @ file:line"."""
+    from . import landmarks as L
+    s = _session()
+    p = _profile_path(s, profile)
+    prof = L.load(p["path"])
+    keys = [k for k in prof["functions"] if function in k]
+    if not keys:
+        raise ValueError(f"no function matching {function!r} in {p['profile']}")
+    if len(keys) > 1 and function not in keys:
+        return {"profile": p["profile"], "ambiguous": keys[:20]}
+    key = function if function in keys else keys[0]
+    f = prof["functions"][key]
+    callees = sorted(({"callee": k, **next(c for c in g["callers"] if c["caller"] == key)}
+                      for k, g in prof["functions"].items() if any(c["caller"] == key for c in g["callers"])),
+                     key=lambda c: -c["total_ms"])
+    return {"profile": p["profile"], "function": key,
+            **{kk: v for kk, v in f.items() if kk != "callers"},
+            "callers": f["callers"], "callees": callees[:20]}
+
+
+def profile_diff(before: str, after: str = "latest", k: int = 20) -> dict:
+    """Per-function change between two profiles of the same workload: self
+    time and self allocation deltas, largest first, plus the total delta."""
+    from . import landmarks as L
+    s = _session()
+    a, b = _profile_path(s, before), _profile_path(s, after)
+    return {"before": a["profile"], "after": b["profile"], "workload": a["workload"],
+            "same_workload": a["workload"] == b["workload"] and a["only_test"] == b["only_test"],
+            **L.diff(L.load(a["path"]), L.load(b["path"]), k)}
+
+
 TOOLS = ["env_status", "build", "check", "check_dependents", "test", "test_one",
          "tests_for", "deps_of", "dependents_of", "library_of", "find_module", "usages",
-         "type_at", "definition", "errors"]
+         "type_at", "definition", "errors",
+         "profile_status", "profile_run", "profile_top", "profile_callers", "profile_diff"]
 
 
 
@@ -780,6 +907,8 @@ def facts() -> list:
                "merlin occurrences are file-local on this toolchain); type_at/definition describe "
                "code as last compiled; after every Edit of "
                "a .ml/.mli file a hook runs check automatically and returns its diagnostics. "
+               "profile_* tools work only inside a mina-agent profile session, where the "
+               "focus libraries are compiled with landmarks instrumentation. "
                "Raw dune/opam/nix/cargo/make "
                "commands are denied by permission rules; checked-in scripts run normally; "
                "build-config and Rust boundary files are deny-listed for edits.")

@@ -176,7 +176,9 @@ class Session:
 class RestoreReport:
     """What restore() did and what it left for a human."""
     restored: tuple[str, ...] = ()
+    already_restored: tuple[str, ...] = ()   # dune files found back at their original bytes
     edited: tuple[str, ...] = ()        # dune files changed during the session, left as is
+    stanza_left: tuple[str, ...] = ()   # of `edited`, those still carrying the landmarks stanza
     still_dirty: tuple[str, ...] = ()
     source_edits: tuple[str, ...] = ()  # .ml/.mli changed under the instrumented dirs
     windows_left: tuple[str, ...] = ()  # of those, ones still carrying [@landmark]

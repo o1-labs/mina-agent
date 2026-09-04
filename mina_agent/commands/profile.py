@@ -53,8 +53,11 @@ is the whole run.
 
 def _report(rep: RestoreReport, out):
     """The restore report, one line per file that needs a human decision."""
+    for f in rep.already_restored:
+        out(f"  already at its original contents: {f}")
     for f in rep.edited:
-        out(f"  dune file edited during the session, left as is (still carries the landmarks stanza): {f}")
+        tail = " (still carries the landmarks stanza)" if f in rep.stanza_left else ""
+        out(f"  dune file edited during the session, left as is{tail}: {f}")
     for f in rep.still_dirty:
         out(f"  still differs from git after restore: {f}")
     for f in rep.source_edits:

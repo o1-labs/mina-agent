@@ -242,16 +242,22 @@ def restore(repo) -> RestoreReport:
     s = load(repo)
     if s is None:
         return RestoreReport(note="no active session")
-    restored, edited, still_dirty = [], [], []
+    restored, already, edited, stanza_left, still_dirty = [], [], [], [], []
     for dune, b64 in s.injected.items():
         full = os.path.join(repo, dune)
+        original = base64.b64decode(b64).decode()
         with open(full, encoding="utf-8") as fh:
             current = fh.read()
+        if current == original:
+            already.append(dune)    # put back by hand or by a checkout; nothing to do
+            continue
         if _sha(current) != s.injected_sha.get(dune, _sha(current)):
-            edited.append(dune)     # someone changed it during the session; theirs to resolve
+            edited.append(dune)     # changed during the session; theirs to resolve
+            if "backend landmarks" in current:
+                stanza_left.append(dune)
             continue
         with open(full, "w", encoding="utf-8") as fh:
-            fh.write(base64.b64decode(b64).decode())
+            fh.write(original)
         restored.append(dune)
         if _git_dirty(repo, dune):
             still_dirty.append(dune)
@@ -261,7 +267,8 @@ def restore(repo) -> RestoreReport:
                     if l[3:].endswith((".ml", ".mli"))})
     windows_left = [f for f in edits if "[@landmark" in open(os.path.join(repo, f), encoding="utf-8").read()]
     session_file(repo).unlink()
-    return RestoreReport(restored=tuple(restored), edited=tuple(edited), still_dirty=tuple(still_dirty),
+    return RestoreReport(restored=tuple(restored), already_restored=tuple(already), edited=tuple(edited),
+                         stanza_left=tuple(stanza_left), still_dirty=tuple(still_dirty),
                          source_edits=tuple(edits), windows_left=tuple(windows_left), profiles=s.profiles)
 
 

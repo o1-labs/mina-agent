@@ -52,6 +52,22 @@ def test_restore_keeps_a_dune_file_edited_during_the_session(tmp_path, monkeypat
     assert "base" in dune.read_text() and "landmarks" in dune.read_text()
 
 
+def test_restore_recognises_a_file_already_put_back(tmp_path, monkeypatch):
+    repo, g = _repo(tmp_path, monkeypatch)
+    P.start(repo, g, "x", "lib", ["x"])
+    Path(repo, "src/x/dune").write_text(DUNE)                     # restored by hand / checkout
+    rep = P.restore(repo)
+    assert rep.already_restored == ("src/x/dune",) and rep.edited == () and rep.restored == ()
+
+
+def test_restore_reports_stanza_only_when_present(tmp_path, monkeypatch):
+    repo, g = _repo(tmp_path, monkeypatch)
+    P.start(repo, g, "x", "lib", ["x"])
+    Path(repo, "src/x/dune").write_text(DUNE + "; a comment\n")   # edited, no stanza
+    rep = P.restore(repo)
+    assert rep.edited == ("src/x/dune",) and rep.stanza_left == ()
+
+
 def test_restore_reports_leftover_windows(tmp_path, monkeypatch):
     repo, g = _repo(tmp_path, monkeypatch)
     P.start(repo, g, "x", "lib", ["x"])

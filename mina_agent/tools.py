@@ -427,6 +427,118 @@ def library_of(path: str) -> dict:
 
 
 
+# --------------------------------------------------------------------------
+# module index: module name -> file + owning library
+# --------------------------------------------------------------------------
+
+def _modname(stem):
+    return stem[:1].upper() + stem[1:]
+
+
+def _lib_files(rec, by_dir):
+    """{Module: {ml, mli}} for one library. Dune names a module after its file
+    stem; (modules ...) narrows the set and (include_subdirs ...) widens it to
+    subdirectories that are not dune units of their own."""
+    d = rec["dir"]
+    full = os.path.join(ENV.repo, d)
+    try:
+        with open(os.path.join(full, "dune")) as fh:
+            recurse = "include_subdirs" in fh.read()
+    except OSError:
+        recurse = False
+    found = {}
+    if recurse:
+        for root, dirs, files in os.walk(full):
+            rel_root = os.path.relpath(root, ENV.repo)
+            dirs[:] = [x for x in dirs if os.path.join(rel_root, x) not in by_dir
+                       and x not in derivemod.SKIP_DIRS]
+            for f in files:
+                found.setdefault(f, os.path.join(rel_root, f))
+    else:
+        try:
+            found = {f: os.path.join(d, f) for f in os.listdir(full)}
+        except OSError:
+            return {}
+    mods = rec.get("modules")
+    out = {}
+    for f, p in found.items():
+        stem, ext = os.path.splitext(f)
+        if ext not in (".ml", ".mli") or not stem[:1].isalpha() or "." in stem:
+            continue
+        if mods and (stem in mods.get("exclude", [])
+                     or not (mods.get("with_standard") or stem in mods.get("include", []))):
+            continue
+        out.setdefault(_modname(stem), {"ml": None, "mli": None})[ext[1:]] = p
+    return out
+
+
+def _module_index(g):
+    return {key: {"top": _modname(key), "files": _lib_files(rec, g["by_dir"])}
+            for key, rec in g["libraries"].items()}
+
+
+def find_module(name: str) -> dict:
+    """Where a module lives: its canonical .ml/.mli and the dune library that
+    owns it, for a module name with no position attached (from conversation,
+    a build error, or a dune file). Accepts a bare module (Zkapp_account), a
+    dotted path (Mina_base.Zkapp_account.Stable), or a dune public name
+    (archive.cli). Library hits come first — a library's top module is its
+    wrapper, i.e. the file named after it when one exists — then same-named
+    submodule files in other libraries, each with its library, so an ambiguous
+    name (26 intf.ml) is resolvable. Components beyond the file come back as
+    `remaining`; resolve those inside the file with the LSP (documentSymbol).
+    The library returned is the key for deps_of / dependents_of / tests_for /
+    check_dependents."""
+    g = GRAPH.get()
+    q = name.strip()
+    if not q:
+        raise ValueError("empty module name")
+    if q in g["public_names"]:  # a dune public name names one library directly
+        key = g["public_names"][q]
+        idx = {key: {"top": _modname(key), "files": _lib_files(g["libraries"][key], g["by_dir"])}}
+        comps = [idx[key]["top"]]
+    else:
+        idx = _module_index(g)
+        comps = q.split(".")
+    head, rest = comps[0], comps[1:]
+    hits = []
+    for key, ent in idx.items():
+        rec = g["libraries"][key]
+        base = {"library": key, "public_name": rec["public_name"], "dir": rec["dir"]}
+        if ent["top"] == head:
+            main = ent["files"].get(head)
+            h = {"role": "library", "module": head, **base,
+                 "ml": main["ml"] if main else None, "mli": main["mli"] if main else None}
+            if not main:  # dune generates the wrapper; the files are its submodules
+                subs = sorted(ent["files"])
+                h.update(auto_wrapper=True, submodules=subs[:40], submodule_count=len(subs))
+            hits.append(h)
+        elif head in ent["files"]:
+            f = ent["files"][head]
+            hits.append({"role": "submodule", "module": f"{ent['top']}.{head}", **base,
+                         "ml": f["ml"], "mli": f["mli"]})
+    hits.sort(key=lambda h: (h["role"] != "library", h["dir"]))
+    remaining = rest
+    if rest and hits and hits[0]["role"] == "library":  # Top.Sub -> the file sub.ml
+        lib, sub = hits[0], rest[0]
+        f = idx[lib["library"]]["files"].get(sub)
+        if f:
+            hits = [{"role": "submodule", "module": f"{head}.{sub}", "library": lib["library"],
+                     "public_name": lib["public_name"], "dir": lib["dir"], "ml": f["ml"], "mli": f["mli"]}]
+            remaining = rest[1:]
+        else:
+            lib["note"] = (f"no file {sub.lower()}.ml in {lib['dir']}; {sub} is declared inside "
+                           f"{lib['ml'] or 'the library'}: use documentSymbol or workspaceSymbol")
+            hits = [lib]
+    out = {"query": q, "hit_count": len(hits), "hits": hits[:30], "remaining": remaining}
+    if not hits:
+        out["note"] = ("no library or file is named after this module; a value, type, or module "
+                       "declared inside a file is found by the LSP workspaceSymbol")
+    elif remaining:
+        out["note"] = f"{'.'.join(remaining)} is inside the returned file; use documentSymbol on it"
+    return out
+
+
 def check_dependents(library: str, timeout_s: int = 900) -> dict:
     """Type-check every library that directly depends on `library`, in one
     dune call (`dune build @a/check @b/check ...`). Use after changing an
@@ -548,8 +660,8 @@ def errors(file: str, timeout_s: int = 60) -> dict:
 
 
 TOOLS = ["env_status", "build", "check", "check_dependents", "test", "test_one",
-         "tests_for", "deps_of", "dependents_of", "library_of", "type_at", "definition",
-         "errors"]
+         "tests_for", "deps_of", "dependents_of", "library_of", "find_module", "type_at",
+         "definition", "errors"]
 
 
 
@@ -579,13 +691,19 @@ def facts() -> list:
     from . import lsp
     if lsp.plugin_dir(ENV.repo):
         out.append("ocamllsp is installed: Claude's built-in LSP tool (goToDefinition, findReferences, "
-                   "hover, documentSymbol) works on .ml/.mli files and is the first choice for "
-                   "navigation; type_at/definition are the merlin fallback.")
+                   "hover, documentSymbol, workspaceSymbol) works on .ml/.mli files; type_at/definition "
+                   "are the merlin fallback. goToDefinition resolves a reference at a position; "
+                   "workspaceSymbol finds a declared value, type, or module by name (~2s, whole "
+                   "workspace); find_module maps a module name with no position to its canonical "
+                   "file and library. A library's top module is its file rather than a declaration, "
+                   "so workspaceSymbol does not find it and returns same-named aliases or mocks "
+                   "in other files instead.")
     out.append("MCP server mina-harness provides: " + ", ".join(TOOLS)
                + ". errors gives merlin's sub-second diagnostics for one file and is the fast "
                "inner-loop check after an edit; check decides whether an edit compiles and "
                "check_dependents whether its consumers still do (the slower, cross-module "
-               "truth); type_at/definition describe code as last compiled; after every Edit of "
+               "truth); find_module maps a module name to its file and owning library, the key "
+               "for deps_of/tests_for; type_at/definition describe code as last compiled; after every Edit of "
                "a .ml/.mli file a hook runs check automatically and returns its diagnostics. "
                "Raw dune/opam/nix/cargo/make "
                "commands are denied by permission rules; checked-in scripts run normally; "
@@ -634,5 +752,8 @@ def selftest():
     g = GRAPH.get()
     assert "pickles" in g["libraries"]
     assert resolve_test("inline:currency")["command"] == ["dune", "build", "@src/lib/currency/runtest"]
+    fm = find_module("Mina_base.Zkapp_account.Stable")
+    assert fm["hits"][0]["ml"] == "src/lib/mina_base/zkapp_account.ml" and fm["remaining"] == ["Stable"], fm
+    assert find_module("Staged_ledger")["hits"][0]["role"] == "library"
     print(f"selftest ok: mode={ENV.mode} libraries={len(g['libraries'])}")
 

@@ -88,6 +88,7 @@ class Phase:
     max_budget_usd: float = 5.0
     session: str | None = None       # "profile": run inside a profiling session on args["focus"]
     env: tuple[str, ...] = ()        # environment variables the phase needs (from the shell or harness/.envrc)
+    needs: tuple[str, ...] = ()      # executables that must be on PATH
 
     @property
     def summary(self) -> str:

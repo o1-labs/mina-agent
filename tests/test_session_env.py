@@ -20,7 +20,8 @@ def test_phase_env_requirement_parses(tmp_path):
     f = tmp_path / "p.md"
     f.write_text("---\nname: p\nenv: GH_TOKEN, OTHER\n---\nbody\n")
     assert phases.load(f).env == ("GH_TOKEN", "OTHER")
-    assert next(p for p in phases.all_phases() if p.name == "fix_bug").env == ("GH_TOKEN",)
+    fb = next(p for p in phases.all_phases() if p.name == "fix_bug")
+    assert fb.env == () and fb.needs == ("gh",)
 
 
 def test_headless_settings_have_no_hooks_and_no_coauthor():

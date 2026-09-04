@@ -8,7 +8,8 @@
     max_turns: 40
     max_budget_usd: 5
     args: target
-    env: GH_TOKEN            # required variables, from the shell or harness/.envrc
+    needs: gh                # executables that must be on PATH
+    env: SOME_TOKEN          # variables that must be set, in the shell or harness/.envrc
     ---
     Run the mina-harness `build` tool on `{{target}}` ...
 
@@ -54,6 +55,7 @@ def load(path) -> Phase:
         max_budget_usd=float(meta.get("max_budget_usd", 5)),
         session=meta.get("session"),
         env=_csv(meta.get("env", "")),
+        needs=_csv(meta.get("needs", "")),
     )
 
 

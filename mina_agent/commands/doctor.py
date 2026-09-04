@@ -143,19 +143,19 @@ def linters(e):
 
 
 def github(e):
-    """fix-bug reads issues with gh; the token lives in harness/.envrc."""
+    """fix-bug reads issues with gh, authenticated however the session env
+    provides it: `gh auth login` (keyring) or GH_TOKEN from harness/.envrc."""
     from .. import env as envmod
-    tok = envmod.dotenv(e.repo).get("GH_TOKEN") or os.environ.get("GH_TOKEN")
-    if not tok:
-        yield Check("github token", NOTE, f"GH_TOKEN not set; fix-bug needs it (export it in {envmod.dotenv_path(e.repo)})")
-        return
-    gh = shutil.which("gh")
+    senv = e.session_env() if e.usable else {**os.environ, **envmod.dotenv(e.repo)}
+    gh = shutil.which("gh", path=senv.get("PATH"))
     if not gh:
-        yield Check("github token", FAIL, "GH_TOKEN set but gh is not installed (brew install gh)")
+        yield Check("gh", NOTE, "not installed (brew install gh); fix-bug needs it")
         return
-    r = subprocess.run([gh, "auth", "status"], capture_output=True, text=True, env={**os.environ, "GH_TOKEN": tok})
-    yield Check("github token", OK if r.returncode == 0 else FAIL,
-                "gh authenticated with GH_TOKEN from harness/.envrc" if r.returncode == 0 else (r.stderr or r.stdout).strip()[-200:])
+    r = subprocess.run([gh, "auth", "status"], capture_output=True, text=True, env=senv)
+    how = "GH_TOKEN from harness/.envrc" if "GH_TOKEN" in envmod.dotenv(e.repo) else "gh auth login"
+    yield Check("gh", OK if r.returncode == 0 else FAIL,
+                f"authenticated ({how})" if r.returncode == 0
+                else "not authenticated: run `gh auth login`, or put GH_TOKEN in harness/.envrc")
 
 
 def external_plugins(e):

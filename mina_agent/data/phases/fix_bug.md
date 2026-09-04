@@ -6,7 +6,7 @@ permission_mode: acceptEdits
 max_turns: 80
 max_budget_usd: 20
 args: issue
-env: GH_TOKEN
+needs: gh
 ---
 Fix the bug reported in GitHub issue `{{issue}}`, in three stages, leaving a
 series of commits a reviewer can read one at a time.

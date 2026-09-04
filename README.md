@@ -38,8 +38,10 @@ toolchain needed); `uv run pyright` type-checks the package. Shared record
 types live in `mina_agent/model.py`; modules pass those, and `to_json()`
 serializes at the MCP and log edges.
 
-Secrets: sessions that need a token (fix-bug reads GitHub issues with `gh`)
-take it from `harness/.envrc`, which is gitignored; copy `.envrc.example`
-and fill it in. A phase declares what it needs with `env:` in its front
-matter and refuses to start without it. Commits made in any harness session
-are the user's own: no Co-Authored-By or Generated-with lines.
+Secrets: fix-bug reads GitHub issues with `gh`, authenticated however this
+machine already is (`gh auth login`); where that is not possible, put
+`GH_TOKEN` in `harness/.envrc` (gitignored, see `.envrc.example`) and every
+session sources it. A phase declares tools it needs with `needs:` and
+variables with `env:` in its front matter and refuses to start without
+them. Commits made in any harness session are the user's own: no
+Co-Authored-By or Generated-with lines.

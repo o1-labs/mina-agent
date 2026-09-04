@@ -94,8 +94,8 @@ def graph(e):
     yield Check("landmarks", OK if ok else NOTE, detail)
     s = P.load(e.repo)
     if s:
-        yield Check("profiling session", NOTE, f"active since {s['started']} on {s['focus']} "
-                    f"({len(s['injected'])} dune files instrumented); mina-agent profile --restore ends it")
+        yield Check("profiling session", NOTE, f"active since {s.started} on {s.focus} "
+                    f"({len(s.injected)} dune files instrumented); mina-agent profile --restore ends it")
 
 
 def session_config(e):

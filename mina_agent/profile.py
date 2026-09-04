@@ -15,6 +15,7 @@ never reverts .ml/.mli files: a source edit made during the session may be
 the optimization itself, and windows the model added are its to remove.
 """
 import base64
+import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -24,6 +25,7 @@ import subprocess
 
 from . import landmarks, paths
 from .graph import write_json_atomic
+from .model import ProfileEntry, RestoreReport, Session, Workload, WorkloadCandidate, to_json
 
 DUNE_SUBCOMMANDS = ("build", "exec", "runtest", "test")
 
@@ -38,16 +40,16 @@ def session_file(repo):
     return state_dir(repo) / "session.json"
 
 
-def load(repo):
+def load(repo) -> Session | None:
     p = session_file(repo)
     if not p.exists():
         return None
     with open(p) as fh:
-        return json.load(fh)
+        return Session.from_json(json.load(fh))
 
 
-def save(repo, s):
-    write_json_atomic(session_file(repo), s)
+def save(repo, s: Session):
+    write_json_atomic(session_file(repo), to_json(s))
 
 
 def _sha(text: str) -> str:
@@ -126,6 +128,42 @@ def _git_dirty(repo, relpath):
     return bool(r.stdout.strip())
 
 
+def resolve_focus(g, focus) -> str:
+    """A library key from a dune name, a public name, or a source path inside it."""
+    if focus in g["libraries"]:
+        return focus
+    if focus in g["public_names"]:
+        return g["public_names"][focus]
+    from . import tools
+    u = tools.library_of(focus)
+    if u["kind"] != "lib":
+        raise ValueError(f"{focus} is inside {u['kind']} unit {u['key']}, not a library; focus on a library")
+    return u["key"]
+
+
+def workload_candidates(g, focus) -> list[WorkloadCandidate]:
+    """Candidate workloads for the focus, cheapest and most direct first."""
+    from . import tools
+    rec = g["libraries"][focus]
+    mt = tools.manifest_tests()
+    out: list[WorkloadCandidate] = []
+    if rec["has_inline_tests"]:
+        out.append(WorkloadCandidate(f"inline:{focus}", "the focus library's own inline tests", "unmeasured"))
+    for c in tools.tests_for(rec["dir"])["candidates"]:
+        name = c["name"]
+        spec = name if name in mt else (f"test:{name[5:]}" if name.startswith("test:") else name)
+        if any(spec == o.spec for o in out):
+            continue
+        try:
+            resolve_workload(g, mt, spec)
+        except ValueError:
+            continue
+        out.append(WorkloadCandidate(spec, c["reason"], c["cost"]))
+    if "src/app/benchmarks" in g["by_dir"]:
+        out.append(WorkloadCandidate("exe:src/app/benchmarks/benchmarks.exe", "the repo's core_bench executable", "slow"))
+    return out[:12]
+
+
 def scope_libraries(g, focus, scope):
     """Library keys to instrument for a focus: the focus alone, its direct
     local deps, or its whole local dependency cone."""
@@ -143,7 +181,7 @@ def scope_libraries(g, focus, scope):
     return libs
 
 
-def start(repo, g, focus, scope, libs):
+def start(repo, g, focus, scope, libs) -> Session:
     """Inject stanzas for libs and record the session. Refuses if one is
     already active or any target dune file is dirty."""
     if active(repo):
@@ -172,30 +210,29 @@ def start(repo, g, focus, scope, libs):
     for dune, (text, new) in plan.items():
         with open(os.path.join(repo, dune), "w", encoding="utf-8") as fh:
             fh.write(new)
-    s = {"started": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-         "focus": focus, "scope": scope, "libraries": libs,
-         "dirs": [g["libraries"][l]["dir"] for l in libs],
-         "injected": {dune: base64.b64encode(text.encode()).decode() for dune, (text, _) in plan.items()},
-         "injected_sha": {dune: _sha(new) for dune, (_, new) in plan.items()},
-         "skipped": skipped, "profiles": []}
+    s = Session(started=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                focus=focus, scope=scope, libraries=tuple(libs),
+                dirs=tuple(g["libraries"][l]["dir"] for l in libs),
+                injected={dune: base64.b64encode(text.encode()).decode() for dune, (text, _) in plan.items()},
+                injected_sha={dune: _sha(new) for dune, (_, new) in plan.items()},
+                skipped=tuple(skipped))
     save(repo, s)
     return s
 
 
-def restore(repo):
-    """Put every injected dune file back and end the session. Returns a
-    report; never touches .ml/.mli files, and never overwrites a dune file
-    that was edited after injection (reported under `edited` instead)."""
+def restore(repo) -> RestoreReport:
+    """Put every injected dune file back and end the session. Never touches
+    .ml/.mli files, and never overwrites a dune file that was edited after
+    injection (reported as `edited` instead)."""
     s = load(repo)
     if s is None:
-        return {"restored": [], "edited": [], "still_dirty": [], "source_edits": [], "windows_left": [],
-                "profiles": [], "note": "no active session"}
+        return RestoreReport(note="no active session")
     restored, edited, still_dirty = [], [], []
-    for dune, b64 in s["injected"].items():
+    for dune, b64 in s.injected.items():
         full = os.path.join(repo, dune)
         with open(full, encoding="utf-8") as fh:
             current = fh.read()
-        if _sha(current) != s.get("injected_sha", {}).get(dune, _sha(current)):
+        if _sha(current) != s.injected_sha.get(dune, _sha(current)):
             edited.append(dune)     # someone changed it during the session; theirs to resolve
             continue
         with open(full, "w", encoding="utf-8") as fh:
@@ -203,24 +240,22 @@ def restore(repo):
         restored.append(dune)
         if _git_dirty(repo, dune):
             still_dirty.append(dune)
-    edits = []
-    for d in s["dirs"]:
-        r = subprocess.run(["git", "-C", os.path.join(repo, d), "status", "--porcelain", "--", "."],
-                           capture_output=True, text=True)
-        edits += [l[3:] for l in r.stdout.splitlines() if l[3:].endswith((".ml", ".mli"))]
-    edits = sorted(set(edits))
+    edits = sorted({l[3:] for d in s.dirs
+                    for l in subprocess.run(["git", "-C", os.path.join(repo, d), "status", "--porcelain", "--", "."],
+                                            capture_output=True, text=True).stdout.splitlines()
+                    if l[3:].endswith((".ml", ".mli"))})
     windows_left = [f for f in edits if "[@landmark" in open(os.path.join(repo, f), encoding="utf-8").read()]
     session_file(repo).unlink()
-    return {"restored": restored, "edited": edited, "still_dirty": still_dirty, "source_edits": edits,
-            "windows_left": windows_left, "profiles": s["profiles"]}
+    return RestoreReport(restored=tuple(restored), edited=tuple(edited), still_dirty=tuple(still_dirty),
+                         source_edits=tuple(edits), windows_left=tuple(windows_left), profiles=s.profiles)
 
 
 # --------------------------------------------------------------------------
 # workloads
 # --------------------------------------------------------------------------
 
-def resolve_workload(g, manifest_tests, spec):
-    """A workload spec -> [(build_target, exe_relpath, argv_tail, cwd_rel)].
+def resolve_workload(g, manifest_tests, spec) -> list[Workload]:
+    """A workload spec -> the executables to build and run.
 
     inline:<lib>            the library's ppx_inline_test runner
     test:<dir>/<name>       a (test) unit from the graph
@@ -234,30 +269,30 @@ def resolve_workload(g, manifest_tests, spec):
             raise ValueError(f"{lib} is not a library with (inline_tests)")
         d = rec["dir"]
         exe = f"{d}/.{lib}.inline-tests/inline_test_runner_{lib}.exe"
-        return [(exe, exe, ["inline-test-runner", lib], d)]
+        return [Workload(exe, exe, ("inline-test-runner", lib), d)]
     if spec.startswith("test:"):
         key = spec[5:]
         rec = g["tests"].get(key)
         if not rec:
             raise ValueError(f"unknown test unit {key!r}")
         exe = f"{rec['dir']}/{rec['name']}.exe"
-        return [(exe, exe, [], rec["dir"])]
+        return [Workload(exe, exe, (), rec["dir"])]
     if spec.startswith("exe:"):
         exe = spec[4:]
-        return [(exe, exe, [], os.path.dirname(exe))]
+        return [Workload(exe, exe, (), os.path.dirname(exe))]
     t = manifest_tests.get(spec)
     if not t:
         raise ValueError(f"unknown workload {spec!r}: use inline:<lib>, test:<dir>/<name>, exe:<path.exe>, "
                          "or a manifest test name")
     cmd = t["command"]
     if cmd[:2] == ["dune", "exec"] and cmd[2].endswith(".exe"):
-        return [(cmd[2], cmd[2], [], os.path.dirname(cmd[2]))]
+        return [Workload(cmd[2], cmd[2], (), os.path.dirname(cmd[2]))]
     alias = next((a for a in cmd if a.startswith("@") and a.endswith("/runtest")), None)
     if alias:
         d = alias[1:-len("/runtest")]
         units = [(k, r) for k, r in g["tests"].items() if r["dir"] == d]
         if units:
-            return [(f"{d}/{r['name']}.exe", f"{d}/{r['name']}.exe", [], d) for _, r in units]
+            return [Workload(f"{d}/{r['name']}.exe", f"{d}/{r['name']}.exe", (), d) for _, r in units]
         libs = [k for k, r in g["libraries"].items() if r["dir"] == d and r["has_inline_tests"]]
         if libs:
             return resolve_workload(g, manifest_tests, f"inline:{libs[0]}")
@@ -275,8 +310,7 @@ def next_profile_path(repo, spec):
     return state_dir(repo) / f"{max(taken, default=0) + 1:03d}-{safe}.json"
 
 
-def record_profile(repo, entry):
+def record_profile(repo, entry: ProfileEntry):
     s = load(repo)
     if s is not None:
-        s["profiles"].append(entry)
-        save(repo, s)
+        save(repo, dataclasses.replace(s, profiles=(*s.profiles, entry)))

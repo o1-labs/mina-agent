@@ -4,6 +4,7 @@ from typing import Optional
 import typer
 
 from .. import agent, paths
+from ..model import RestoreReport
 
 RULES = """\
 You are in a mina-agent profiling session inside the Mina monorepo. The
@@ -48,51 +49,16 @@ is the whole run.
 """
 
 
-def _report(rep, out):
+def _report(rep: RestoreReport, out):
     """The restore report, one line per file that needs a human decision."""
-    for f in rep["edited"]:
+    for f in rep.edited:
         out(f"  dune file edited during the session, left as is (still carries the landmarks stanza): {f}")
-    for f in rep["still_dirty"]:
+    for f in rep.still_dirty:
         out(f"  still differs from git after restore: {f}")
-    for f in rep["source_edits"]:
+    for f in rep.source_edits:
         out(f"  source edit left in place (yours to keep or revert): {f}")
-    for f in rep["windows_left"]:
+    for f in rep.windows_left:
         out(f"  [@landmark] windows left behind, remove them: {f}")
-
-
-def _resolve_focus(tools, g, focus):
-    if focus in g["libraries"]:
-        return focus
-    if focus in g["public_names"]:
-        return g["public_names"][focus]
-    u = tools.library_of(focus)
-    if u["kind"] != "lib":
-        raise ValueError(f"{focus} is inside {u['kind']} unit {u['key']}, not a library; focus on a library")
-    return u["key"]
-
-
-def _workloads(tools, g, s):
-    """Candidate workloads for the focus, cheapest and most direct first."""
-    from .. import profile as P
-    focus = s["focus"]
-    rec = g["libraries"][focus]
-    mt = tools.manifest_tests()
-    out = []
-    if rec["has_inline_tests"]:
-        out.append((f"inline:{focus}", "the focus library's own inline tests", "unmeasured"))
-    for c in tools.tests_for(rec["dir"])["candidates"]:
-        name = c["name"]
-        spec = name if name in mt else (f"test:{name[5:]}" if name.startswith("test:") else name)
-        if any(spec == o[0] for o in out):
-            continue
-        try:
-            P.resolve_workload(g, mt, spec)
-        except ValueError:
-            continue
-        out.append((spec, c["reason"], c["cost"]))
-    if "src/app/benchmarks" in g["by_dir"]:
-        out.append(("exe:src/app/benchmarks/benchmarks.exe", "the repo's core_bench executable", "slow"))
-    return out[:12]
 
 
 def _examples():
@@ -137,11 +103,11 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     enough to read. Nothing is installed: landmarks is vendored into
     harness/state by setup.
     """
-    from .. import env as envmod, graph, landmarks, profile as P, tools
+    from .. import env as envmod, graph, landmarks, profile as P
     e = envmod.detect()
     if restore:
         rep = P.restore(e.repo)
-        print(f"restored {len(rep['restored'])} dune file(s)" + (f": {rep.get('note')}" if rep.get("note") else ""))
+        print(f"restored {len(rep.restored)} dune file(s)" + (f": {rep.note}" if rep.note else ""))
         _report(rep, print)
         return
     if not e.usable:
@@ -159,10 +125,9 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     if not landmarks.present(e.repo):
         d, msg = landmarks.fetch(e)
         typer.echo(f"landmarks: {d} ({msg})", err=True)
-    lib = _resolve_focus(tools, g, focus)
+    lib = P.resolve_focus(g, focus)
     libs = P.scope_libraries(g, lib, scope)
-    plan = {"focus": lib, "dirs": [g["libraries"][l]["dir"] for l in libs]}
-    workloads = _workloads(tools, g, plan)
+    workloads = P.workload_candidates(g, lib)
     from .discuss import RULES as DISCUSS_RULES
     notes = paths.notes_file(e.repo)
     orient = [DISCUSS_RULES.format(notes=str(notes)), RULES, "## Session", "",
@@ -170,8 +135,7 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
               f"{len(libs)} instrumented librar{'y' if len(libs) == 1 else 'ies'}"
               + (": " + ", ".join(libs[:15]) + (" ..." if len(libs) > 15 else "") if len(libs) > 1 else "") + ".",
               "Workload candidates (cheapest and most direct first):"]
-    for spec, why, cost in workloads:
-        orient.append(f"  profile_run(\"{spec}\")  [{cost}]  {why}")
+    orient += [f"  profile_run(\"{w.spec}\")  [{w.cost}]  {w.reason}" for w in workloads]
     orient += ["", "Profiles land in " + str(P.state_dir(e.repo)) + "; profile ids are their file stems."]
     first_message = "\n".join(orient)
     if dry_run:
@@ -184,14 +148,14 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
             print("   ", a[:160].replace("\n", " ") + ("..." if len(a) > 160 else ""))
         return
     s = P.start(e.repo, g, lib, scope, libs)
-    typer.echo(f"instrumented {len(s['injected'])} dune file(s) for {len(libs)} librar{'y' if len(libs) == 1 else 'ies'}; "
+    typer.echo(f"instrumented {len(s.injected)} dune file(s) for {len(libs)} librar{'y' if len(libs) == 1 else 'ies'}; "
                f"session {P.session_file(e.repo)}", err=True)
-    for l, why in s["skipped"]:
+    for l, why in s.skipped:
         typer.echo(f"  skipped {l}: {why}", err=True)
     try:
         rc = agent.run_interactive(first_message, e)
     finally:
         rep = P.restore(e.repo)
-        typer.echo(f"session ended; restored {len(rep['restored'])} dune file(s), "
-                   f"{len(rep['profiles'])} profile(s) kept in {P.state_dir(e.repo)}", err=True)
+        typer.echo(f"session ended; restored {len(rep.restored)} dune file(s), "
+                   f"{len(rep.profiles)} profile(s) kept in {P.state_dir(e.repo)}", err=True)
         _report(rep, lambda m: typer.echo(m, err=True))

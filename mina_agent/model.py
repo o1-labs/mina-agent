@@ -109,3 +109,108 @@ def to_json(obj: Any) -> Any:
     if isinstance(obj, (list, tuple)):
         return [to_json(v) for v in obj]
     return obj
+
+
+# --------------------------------------------------------------------------
+# profiling
+# --------------------------------------------------------------------------
+
+class Workload(NamedTuple):
+    """One executable to build and run under the profiler."""
+    target: str                 # dune build target
+    exe: str                    # path under _build/default
+    args: tuple[str, ...]       # argv tail
+    cwd: str                    # run directory under _build/default
+
+
+class WorkloadCandidate(NamedTuple):
+    spec: str
+    reason: str
+    cost: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileEntry:
+    """One recorded profile of a session."""
+    profile: str                # file stem, the id tools take
+    path: str
+    workload: str
+    only_test: str | None
+    exe: str
+    exit_code: int
+    run_s: float
+    build_s: float
+    total_ms: float
+    units: str
+    functions: int
+    focus_functions_hit: int
+    focus_self_share_pct: float
+
+
+@dataclass(frozen=True, slots=True)
+class Session:
+    """An active profiling session, persisted as state/profile/session.json."""
+    started: str
+    focus: str
+    scope: str
+    libraries: tuple[str, ...]
+    dirs: tuple[str, ...]
+    injected: dict[str, str]            # dune path -> base64 of the original bytes
+    injected_sha: dict[str, str]        # dune path -> sha256 of the injected text
+    skipped: tuple[tuple[str, str], ...] = ()
+    profiles: tuple[ProfileEntry, ...] = ()
+
+    @classmethod
+    def from_json(cls, d: dict) -> "Session":
+        return cls(started=d["started"], focus=d["focus"], scope=d["scope"],
+                   libraries=tuple(d["libraries"]), dirs=tuple(d["dirs"]),
+                   injected=dict(d["injected"]), injected_sha=dict(d.get("injected_sha", {})),
+                   skipped=tuple((a, b) for a, b in d.get("skipped", [])),
+                   profiles=tuple(ProfileEntry(**p) for p in d.get("profiles", [])))
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreReport:
+    """What restore() did and what it left for a human."""
+    restored: tuple[str, ...] = ()
+    edited: tuple[str, ...] = ()        # dune files changed during the session, left as is
+    still_dirty: tuple[str, ...] = ()
+    source_edits: tuple[str, ...] = ()  # .ml/.mli changed under the instrumented dirs
+    windows_left: tuple[str, ...] = ()  # of those, ones still carrying [@landmark]
+    profiles: tuple[ProfileEntry, ...] = ()
+    note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CallerEdge:
+    caller: str
+    calls: int
+    total_ms: float
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionStats:
+    """Per-function aggregate over every call-tree instance in a profile."""
+    name: str
+    location: str
+    kind: str
+    self_ms: float
+    total_ms: float
+    calls: int
+    self_alloc_mb: float
+    alloc_mb: float
+    self_pct: float
+    callers: tuple[CallerEdge, ...]     # by time under the edge, largest first
+
+    def under(self, dirs) -> bool:
+        return any(self.location.startswith(d + "/") for d in dirs)
+
+
+@dataclass(frozen=True, slots=True)
+class Profile:
+    label: str | None
+    hz: float | None
+    units: str                          # "ms" when calibrated, else "ticks"
+    total_ms: float
+    nodes: int
+    functions: dict[str, FunctionStats]  # key: "name @ file:line"

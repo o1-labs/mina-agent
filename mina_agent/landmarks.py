@@ -23,7 +23,6 @@ ticks, calls, allocated_bytes (inclusive), sys_time, children. The threshold
 option applies to the textual format only; JSON is complete. Ticks are
 converted to seconds by calibrating against the root's sys_time.
 """
-import collections
 import json
 import os
 import shutil
@@ -31,6 +30,7 @@ import subprocess
 import tempfile
 
 from . import paths
+from .model import CallerEdge, FunctionStats, Profile, to_json
 
 VERSION = "1.5"
 STATE_DUNE = "(dirs landmarks)\n(vendored_dirs landmarks)\n"
@@ -89,14 +89,14 @@ def status(repo):
 # profile parsing
 # --------------------------------------------------------------------------
 
-def load(path):
-    """Read a landmarks JSON profile into per-function aggregates.
+RANK_KEYS = ("self_ms", "total_ms", "calls", "self_alloc_mb", "alloc_mb")
 
-    Returns {"label", "hz", "total_ms", "functions": {key: {...}}} where key
-    is "name @ file:line". Self time/allocation is the node's inclusive
-    figure minus its children's, summed over all instances of the function;
-    callers lists the parent functions with the inclusive time spent under
-    each, so a hot function can be attributed to who calls it."""
+
+def load(path) -> Profile:
+    """Read a landmarks JSON profile into per-function aggregates, keyed
+    "name @ file:line". Self time/allocation is the node's inclusive figure
+    minus its children's, summed over all instances of the function; callers
+    are the parent functions with the inclusive time spent under each."""
     with open(path) as fh:
         g = json.load(fh)
     nodes = g["nodes"]
@@ -104,68 +104,58 @@ def load(path):
     root = byid[g["root"]]
     hz = root["time"] / root["sys_time"] if root.get("sys_time") else None
     ms = (lambda t: t / hz * 1e3) if hz else (lambda t: t)
-    parent = {}
-    for n in nodes:
-        for c in n["children"]:
-            parent[c] = n["id"]
+    parent = {c: n["id"] for n in nodes for c in n["children"]}
+    key = lambda n: f"{n['name']} @ {n['location']}"
 
-    def key(n):
-        return f"{n['name']} @ {n['location']}"
-
-    fns = {}
+    acc: dict[str, dict] = {}       # per-function running sums
     for n in nodes:
         if n["kind"] == "root":
             continue
         kids = [byid[c] for c in n["children"]]
-        self_t = n["time"] - sum(k["time"] for k in kids)
-        self_a = n["allocated_bytes"] - sum(k["allocated_bytes"] for k in kids)
-        f = fns.setdefault(key(n), {"name": n["name"], "location": n["location"], "kind": n["kind"],
+        a = acc.setdefault(key(n), {"name": n["name"], "location": n["location"], "kind": n["kind"],
                                     "self_ms": 0.0, "total_ms": 0.0, "calls": 0,
                                     "self_alloc_mb": 0.0, "alloc_mb": 0.0, "callers": {}})
-        f["self_ms"] += ms(self_t)
-        f["total_ms"] += ms(n["time"])
-        f["calls"] += n["calls"]
-        f["self_alloc_mb"] += self_a / 1e6
-        f["alloc_mb"] += n["allocated_bytes"] / 1e6
+        a["self_ms"] += ms(n["time"] - sum(k["time"] for k in kids))
+        a["total_ms"] += ms(n["time"])
+        a["calls"] += n["calls"]
+        a["self_alloc_mb"] += (n["allocated_bytes"] - sum(k["allocated_bytes"] for k in kids)) / 1e6
+        a["alloc_mb"] += n["allocated_bytes"] / 1e6
         p = parent.get(n["id"])
         if p is not None and byid[p]["kind"] != "root":
-            c = f["callers"].setdefault(key(byid[p]), {"calls": 0, "total_ms": 0.0})
-            c["calls"] += n["calls"]
-            c["total_ms"] += ms(n["time"])
+            c = a["callers"].setdefault(key(byid[p]), [0, 0.0])
+            c[0] += n["calls"]
+            c[1] += ms(n["time"])
     total = ms(root["time"])
-    for f in fns.values():
-        f["self_pct"] = round(100 * f["self_ms"] / total, 1) if total else 0.0
-        for k in ("self_ms", "total_ms", "self_alloc_mb", "alloc_mb"):
-            f[k] = round(f[k], 2)
-        f["callers"] = sorted(({"caller": k, **v} for k, v in f["callers"].items()),
-                              key=lambda c: -c["total_ms"])
-    return {"label": g.get("label"), "hz": hz, "units": "ms" if hz else "ticks",
-            "total_ms": round(total, 2), "nodes": len(nodes), "functions": fns}
+    fns = {
+        k: FunctionStats(
+            name=a["name"], location=a["location"], kind=a["kind"],
+            self_ms=round(a["self_ms"], 2), total_ms=round(a["total_ms"], 2), calls=a["calls"],
+            self_alloc_mb=round(a["self_alloc_mb"], 2), alloc_mb=round(a["alloc_mb"], 2),
+            self_pct=round(100 * a["self_ms"] / total, 1) if total else 0.0,
+            callers=tuple(sorted((CallerEdge(c, n, round(t, 2)) for c, (n, t) in a["callers"].items()),
+                                 key=lambda e: -e.total_ms)))
+        for k, a in acc.items()}
+    return Profile(label=g.get("label"), hz=hz, units="ms" if hz else "ticks",
+                   total_ms=round(total, 2), nodes=len(nodes), functions=fns)
 
 
-def top(prof, by="self_ms", k=15, library_dirs=None):
-    """Ranked functions; library_dirs restricts to locations under those dirs."""
-    fns = prof["functions"].values()
-    if library_dirs:
-        fns = [f for f in fns if any(f["location"].startswith(d + "/") for d in library_dirs)]
-    rows = sorted(fns, key=lambda f: -f[by])[:k]
-    return [{kk: v for kk, v in f.items() if kk != "callers"} | {"top_callers": f["callers"][:3]}
+def top(prof: Profile, by="self_ms", k=15, library_dirs=None) -> list[dict]:
+    """Ranked functions as JSON rows; library_dirs restricts to locations under those dirs."""
+    fns = [f for f in prof.functions.values() if not library_dirs or f.under(library_dirs)]
+    rows = sorted(fns, key=lambda f: -getattr(f, by))[:k]
+    return [{**{kk: v for kk, v in to_json(f).items() if kk != "callers"}, "top_callers": to_json(f.callers[:3])}
             for f in rows]
 
 
-def diff(a, b, k=20):
+def diff(a: Profile, b: Profile, k=20) -> dict:
     """Per-function change from profile a to b (same workload), largest first."""
-    keys = set(a["functions"]) | set(b["functions"])
-    out = []
-    for key in keys:
-        fa, fb = a["functions"].get(key), b["functions"].get(key)
-        sa, sb = (fa or {}).get("self_ms", 0.0), (fb or {}).get("self_ms", 0.0)
-        aa, ab = (fa or {}).get("self_alloc_mb", 0.0), (fb or {}).get("self_alloc_mb", 0.0)
-        out.append({"function": key, "self_ms_before": sa, "self_ms_after": sb,
-                    "self_ms_delta": round(sb - sa, 2),
-                    "self_alloc_mb_before": aa, "self_alloc_mb_after": ab,
-                    "self_alloc_mb_delta": round(ab - aa, 2),
-                    "status": "added" if fa is None else "removed" if fb is None else "changed"})
-    out.sort(key=lambda r: -abs(r["self_ms_delta"]))
-    return {"total_ms_before": a["total_ms"], "total_ms_after": b["total_ms"],
-            "total_ms_delta": round(b["total_ms"] - a["total_ms"], 2), "functions": out[:k]}
+    def row(key):
+        fa, fb = a.functions.get(key), b.functions.get(key)
+        sa, sb = (fa.self_ms if fa else 0.0), (fb.self_ms if fb else 0.0)
+        aa, ab = (fa.self_alloc_mb if fa else 0.0), (fb.self_alloc_mb if fb else 0.0)
+        return {"function": key, "self_ms_before": sa, "self_ms_after": sb, "self_ms_delta": round(sb - sa, 2),
+                "self_alloc_mb_before": aa, "self_alloc_mb_after": ab, "self_alloc_mb_delta": round(ab - aa, 2),
+                "status": "added" if fa is None else "removed" if fb is None else "changed"}
+    rows = sorted((row(key) for key in set(a.functions) | set(b.functions)), key=lambda r: -abs(r["self_ms_delta"]))
+    return {"total_ms_before": a.total_ms, "total_ms_after": b.total_ms,
+            "total_ms_delta": round(b.total_ms - a.total_ms, 2), "functions": rows[:k]}

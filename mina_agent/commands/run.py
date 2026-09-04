@@ -23,16 +23,13 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
     if phase.session == "profile":
         # instrument the focus for the whole run; the model gets the same
         # Session block an interactive profile session starts with
-        from .. import tools
-        from .profile import _resolve_focus, _workloads
         if P.active(e.repo):
             typer.echo("a profiling session is already active; run mina-agent profile --restore first", err=True)
             raise typer.Exit(2)
-        lib = _resolve_focus(tools, g, args["focus"])
-        plan = {"focus": lib, "dirs": [g["libraries"][lib]["dir"]]}
+        lib = P.resolve_focus(g, args["focus"])
         block = [f"\n## Session\n\nFocus: library {lib} in {g['libraries'][lib]['dir']}, instrumented.",
                  "Workload candidates (cheapest and most direct first):"]
-        block += [f"  profile_run(\"{spec}\")  [{cost}]  {why}" for spec, why, cost in _workloads(tools, g, plan)]
+        block += [f"  profile_run(\"{w.spec}\")  [{w.cost}]  {w.reason}" for w in P.workload_candidates(g, lib)]
         prompt += "\n".join(block) + "\n"
         session = (lib, [lib])
     options = agent.build_options(phase, e, max_turns=max_turns, max_budget_usd=max_budget_usd,
@@ -51,15 +48,15 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
         except RuntimeError as ex:
             typer.echo(f"cannot start the profiling session: {ex}", err=True)
             raise typer.Exit(2)
-        print(f"profiling session: instrumented {len(s['injected'])} dune file(s) for {session[0]}\n")
+        print(f"profiling session: instrumented {len(s.injected)} dune file(s) for {session[0]}\n")
     try:
         traj = agent.run_headless(prompt, options, log_path,
                                   on_call=lambda t, c: print(t.progress_line(c), flush=True))
     finally:
         if session:
             rep = P.restore(e.repo)
-            print(f"\nprofiling session ended: restored {len(rep['restored'])} dune file(s), "
-                  f"{len(rep['profiles'])} profile(s) kept")
+            print(f"\nprofiling session ended: restored {len(rep.restored)} dune file(s), "
+                  f"{len(rep.profiles)} profile(s) kept")
             _report(rep, print)
     if agent.STDERR:
         sys.stderr.write("\n".join(agent.STDERR[-20:]) + "\n")

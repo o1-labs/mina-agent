@@ -36,6 +36,14 @@ def tool_label(name):
     return name.replace("mcp__mina-harness__", "harness.")
 
 
+def blocks(rec):
+    """The content blocks of a logged message. SDK message content is
+    `str | list[ContentBlock]`; a plain string (the auto-compaction summary
+    the CLI emits as a user message, for one) carries no blocks."""
+    c = rec.get("content")
+    return c if isinstance(c, list) else []
+
+
 class Trajectory:
     def __init__(self):
         self.tools_available = None
@@ -49,14 +57,14 @@ class Trajectory:
             if sub == "init":
                 self.tools_available = data.get("tools") or []
         elif k == "AssistantMessage":
-            for b in rec.get("content") or []:
+            for b in blocks(rec):
                 if b.get("block") == "ToolUseBlock":
                     c = {"id": b["id"], "name": b["name"], "input": b.get("input") or {},
                          "result": None, "is_error": False}
                     self.calls.append(c)
                     self.by_id[c["id"]] = c
         elif k == "UserMessage":
-            for b in rec.get("content") or []:
+            for b in blocks(rec):
                 if b.get("block") == "ToolResultBlock" and b.get("tool_use_id") in self.by_id:
                     c = self.by_id[b["tool_use_id"]]
                     c["result"] = b.get("content")

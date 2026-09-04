@@ -16,6 +16,7 @@ subcommand whose --<arg> options come from `args`. Nothing is listed by hand.
 """
 import os
 import re
+import sys
 
 from . import paths
 
@@ -50,9 +51,15 @@ def load(path):
 
 
 def all_phases():
+    """Every valid phase under data/phases. A malformed file is reported on
+    stderr and skipped, so one bad phase cannot take down the CLI (serve,
+    hooks and the git pre-commit hook all go through the same entry point)."""
     out = []
     for f in sorted(paths.PHASES.glob("*.md")):
-        out.append(load(f))
+        try:
+            out.append(load(f))
+        except (ValueError, OSError) as ex:
+            sys.stderr.write(f"mina-agent: skipping phase {f.name}: {ex}\n")
     return out
 
 

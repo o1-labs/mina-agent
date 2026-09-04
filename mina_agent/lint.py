@@ -2,9 +2,13 @@
 
 Each check corresponds to one buildkite/src/Jobs/Lint/*.dhall job and runs
 the same thing CI runs (the repo's own scripts where they exist), but only on
-the staged files that would trigger that job. A check that needs a tool this
-machine lacks reports `skip` loudly rather than passing silently. Nothing
-here runs dune.
+the staged files that would trigger that job. In staged mode the index is
+materialised into a temporary tree (`git checkout-index`, deleted afterwards)
+and content checks run there, so they judge what the commit will contain,
+not what is on disk. Checks that are about git state (submodule pointer,
+branch comparisons) and cargo (its target cache) use the real checkout. A
+check that needs a tool this machine lacks reports `skip` loudly rather than
+passing silently. Nothing here runs dune.
 
     mina-agent lint            staged files (what `git commit` would take)
     mina-agent lint --all      the whole tree, e.g. before opening a PR
@@ -12,9 +16,11 @@ here runs dune.
     mina-agent hook pre-commit lint, exit 1 on any failure (installed by init)
 """
 import concurrent.futures as cf
+import contextlib
 import os
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -50,6 +56,15 @@ def all_files(repo):
     return [p for p in out.split("\0") if p]
 
 
+@contextlib.contextmanager
+def staged_tree(repo):
+    """A temporary directory holding the index contents (staged blobs, no
+    untracked or unstaged edits). Removed on exit."""
+    with tempfile.TemporaryDirectory(prefix="mina-lint-") as tmp:
+        subprocess.run(["git", "checkout-index", "-a", f"--prefix={tmp}/"], cwd=repo, check=True)
+        yield tmp
+
+
 def _skip_format(path):
     return any(path.startswith(s) or ("/" + s) in ("/" + path) for s in FORMAT_SKIP)
 
@@ -58,10 +73,11 @@ def _skip_format(path):
 # checks
 # --------------------------------------------------------------------------
 
-def check_ocamlformat(repo, env, files, staged, fix=False):
+def check_ocamlformat(repo, tree, env, files, staged, fix=False):
     """Lint/OCaml: `make check-format` == `ocamlformat --check` per .ml/.mli
-    outside the reformat tool's skip list. Staged mode checks the *index*
-    blob, so a file formatted on disk but staged unformatted still fails."""
+    outside the reformat tool's skip list. Runs in `tree`, so in staged mode
+    a file formatted on disk but staged unformatted still fails; --fix
+    rewrites the working tree."""
     targets = [f for f in files if f.endswith((".ml", ".mli")) and not _skip_format(f)]
     if not targets:
         return Result("ocamlformat", "Lint/OCaml", "ok", "no OCaml files in scope")
@@ -70,13 +86,7 @@ def check_ocamlformat(repo, env, files, staged, fix=False):
         return Result("ocamlformat", "Lint/OCaml", "skip", "ocamlformat not in the switch", targets)
 
     def one(path):
-        kind = "--intf" if path.endswith(".mli") else "--impl"
-        if staged:
-            blob = subprocess.run(["git", "show", f":{path}"], cwd=repo, capture_output=True).stdout
-            r = subprocess.run(["ocamlformat", "--check", f"--name={path}", kind, "-"],
-                               cwd=repo, env=aenv, input=blob, capture_output=True)
-        else:
-            r = subprocess.run(["ocamlformat", "--check", path], cwd=repo, env=aenv, capture_output=True)
+        r = subprocess.run(["ocamlformat", "--check", path], cwd=tree, env=aenv, capture_output=True)
         return path, r.returncode == 0
 
     with cf.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
@@ -91,60 +101,60 @@ def check_ocamlformat(repo, env, files, staged, fix=False):
     return Result("ocamlformat", "Lint/OCaml", "ok", f"{len(targets)} file(s) formatted")
 
 
-def check_require_ppxs(repo, env, files, staged):
+def check_require_ppxs(repo, tree, env, files, staged):
     """Lint/OCaml second half: scripts/require-ppxs.py (every dune stanza under
     src preprocesses with ppx_version). Whole-tree by nature, cheap; runs
     when a dune file is in scope."""
     if not any(os.path.basename(f) == "dune" and f.startswith("src/") for f in files):
         return Result("require-ppxs", "Lint/OCaml", "ok", "no dune files in scope")
     import sys
-    r = subprocess.run([sys.executable, "scripts/require-ppxs.py"], cwd=repo, capture_output=True, text=True)
+    r = subprocess.run([sys.executable, "scripts/require-ppxs.py"], cwd=tree, capture_output=True, text=True)
     if r.returncode == 0:
         return Result("require-ppxs", "Lint/OCaml", "ok", "all dune stanzas preprocess with ppx_version")
     return Result("require-ppxs", "Lint/OCaml", "fail", (r.stdout + r.stderr).strip()[-600:], [],
                   "add ppx_version to the stanza's (preprocess (pps ...))")
 
 
-def _script_check(name, job, repo, files, trigger, script, extra_args=()):
+def _script_check(name, job, cwd, files, trigger, script, extra_args=()):
     if not any(trigger(f) for f in files):
         return Result(name, job, "ok", "not in scope")
-    r = subprocess.run(["bash", script, *extra_args], cwd=repo, capture_output=True, text=True)
+    r = subprocess.run(["bash", script, *extra_args], cwd=cwd, capture_output=True, text=True)
     if r.returncode == 0:
         return Result(name, job, "ok", (r.stdout.strip().splitlines() or ["ok"])[-1][:120])
     return Result(name, job, "fail", (r.stdout + r.stderr).strip()[-600:])
 
 
-def check_codeowners(repo, env, files, staged):
-    return _script_check("codeowners", "Lint/Fast", repo, files, lambda f: f == "CODEOWNERS",
+def check_codeowners(repo, tree, env, files, staged):
+    return _script_check("codeowners", "Lint/Fast", tree, files, lambda f: f == "CODEOWNERS",
                          "scripts/lint_codeowners.sh")
 
 
-def check_rfcs(repo, env, files, staged):
-    return _script_check("rfcs", "Lint/Fast", repo, files, lambda f: f.startswith("rfcs/"),
+def check_rfcs(repo, tree, env, files, staged):
+    return _script_check("rfcs", "Lint/Fast", tree, files, lambda f: f.startswith("rfcs/"),
                          "scripts/lint_rfcs.sh")
 
 
-def check_snarky_submodule(repo, env, files, staged):
+def check_snarky_submodule(repo, tree, env, files, staged):
     """Lint/Fast: the snarky pointer must be an ancestor of snarky's master/develop.
     Does a `git fetch` inside the submodule; only runs when the pointer moved."""
     return _script_check("snarky-submodule", "Lint/Fast", repo, files, lambda f: f == "src/lib/snarky",
                          "scripts/check-snarky-submodule.sh")
 
 
-def check_shellcheck(repo, env, files, staged):
+def check_shellcheck(repo, tree, env, files, staged):
     """Lint/Bash: `shellcheck -S warning` on scripts/**/*.sh and buildkite/scripts/**/*.sh."""
     targets = [f for f in files if f.endswith(".sh") and (f.startswith("scripts/") or f.startswith("buildkite/scripts/"))]
     if not targets:
         return Result("shellcheck", "Lint/Bash", "ok", "no shell scripts in scope")
     if not shutil.which("shellcheck"):
         return Result("shellcheck", "Lint/Bash", "skip", "shellcheck not installed (brew install shellcheck); CI will run it", targets)
-    r = subprocess.run(["shellcheck", "-S", "warning", *targets], cwd=repo, capture_output=True, text=True)
+    r = subprocess.run(["shellcheck", "-S", "warning", *targets], cwd=tree, capture_output=True, text=True)
     if r.returncode == 0:
         return Result("shellcheck", "Lint/Bash", "ok", f"{len(targets)} script(s) clean")
     return Result("shellcheck", "Lint/Bash", "fail", (r.stdout + r.stderr).strip()[-800:], targets)
 
 
-def check_hadolint(repo, env, files, staged):
+def check_hadolint(repo, tree, env, files, staged):
     """Lint/Docker: hadolint with the Makefile's ignore list on dockerfiles/."""
     targets = [f for f in files if f.startswith("dockerfiles/")]
     if not targets:
@@ -152,14 +162,16 @@ def check_hadolint(repo, env, files, staged):
     if not shutil.which("hadolint"):
         return Result("hadolint", "Lint/Docker", "skip", "hadolint not installed (brew install hadolint); CI will run it", targets)
     args = [a for code in HADOLINT_IGNORE for a in ("--ignore", code)]
-    r = subprocess.run(["hadolint", *args, *targets], cwd=repo, capture_output=True, text=True)
+    r = subprocess.run(["hadolint", *args, *targets], cwd=tree, capture_output=True, text=True)
     if r.returncode == 0:
         return Result("hadolint", "Lint/Docker", "ok", f"{len(targets)} file(s) clean")
     return Result("hadolint", "Lint/Docker", "fail", (r.stdout + r.stderr).strip()[-800:], targets)
 
 
-def check_dhall(repo, env, files, staged):
-    """Lint/Dhall: `make -C buildkite check_syntax check_lint check_format` (needs dhall)."""
+def check_dhall(repo, tree, env, files, staged):
+    """Lint/Dhall: `make -C buildkite check_syntax check_lint check_format` (needs dhall).
+    The make targets `sed -i` Base.dhall first; running in `tree` keeps that
+    out of the checkout in staged mode."""
     if not any(f.startswith("buildkite/src/") and f.endswith(".dhall") for f in files):
         return Result("dhall", "Lint/Dhall", "ok", "no dhall files in scope")
     from . import dhall
@@ -167,26 +179,20 @@ def check_dhall(repo, env, files, staged):
     if not ok:
         return Result("dhall", "Lint/Dhall", "skip", why)
     lint_env = {**os.environ, "PATH": f"{dhall.binary(repo).parent}:{os.environ.get('PATH', '')}"}
-    base = "buildkite/src/Command/Base.dhall"
-    dirty_before = subprocess.run(["git", "diff", "--quiet", "--", base], cwd=repo).returncode != 0
-    try:
-        r = subprocess.run(["make", "-C", "buildkite", "check_syntax", "check_lint", "check_format"],
-                           cwd=repo, env=lint_env, capture_output=True, text=True)
-    finally:
-        # check_* first run convert_backticks_to_ifs, a sed -i on Base.dhall that
-        # CI never undoes (disposable checkout). Undo it here unless the file
-        # was already modified by the user.
-        if not dirty_before:
-            subprocess.run(["make", "-C", "buildkite", "convert_ifs_to_backticks"],
-                           cwd=repo, env=lint_env, capture_output=True, text=True)
-            subprocess.run(["git", "checkout", "--", base], cwd=repo, capture_output=True)
+    r = subprocess.run(["make", "-C", "buildkite", "check_syntax", "check_lint", "check_format"],
+                       cwd=tree, env=lint_env, capture_output=True, text=True)
+    if tree == repo:
+        # --all mode runs in the checkout; undo the sed as CI's disposable checkout never needs to
+        subprocess.run(["make", "-C", "buildkite", "convert_ifs_to_backticks"],
+                       cwd=repo, env=lint_env, capture_output=True, text=True)
     if r.returncode == 0:
         return Result("dhall", "Lint/Dhall", "ok", "syntax, lint, format clean")
     return Result("dhall", "Lint/Dhall", "fail", (r.stdout + r.stderr).strip()[-800:], [], "cd buildkite && make format")
 
 
-def check_rust(repo, env, files, staged):
-    """Lint/Rust: `cargo check` in src/app/trace-tool and src/app/minimina."""
+def check_rust(repo, tree, env, files, staged):
+    """Lint/Rust: `cargo check` in src/app/trace-tool and src/app/minimina.
+    Runs in the checkout (not `tree`) to reuse the crates' target cache."""
     crates = [c for c in ("src/app/trace-tool", "src/app/minimina") if any(f.startswith(c + "/") for f in files)]
     if not crates:
         return Result("cargo-check", "Lint/Rust", "ok", "no rust crates in scope")
@@ -202,7 +208,7 @@ def check_rust(repo, env, files, staged):
     return Result("cargo-check", "Lint/Rust", "ok", f"{len(crates)} crate(s) check clean")
 
 
-def check_archive_upgrade(repo, env, files, staged):
+def check_archive_upgrade(repo, tree, env, files, staged):
     """Lint/ArchiveUpgrade: schema changes need an upgrade script (compares to develop)."""
     if not any(f.startswith("src/app/archive/") and f.endswith(".sql") for f in files):
         return Result("archive-upgrade", "Lint/ArchiveUpgrade", "ok", "no archive schema changes in scope")
@@ -216,7 +222,7 @@ def check_archive_upgrade(repo, env, files, staged):
     return Result("archive-upgrade", "Lint/ArchiveUpgrade", "fail", (r.stdout + r.stderr).strip()[-600:])
 
 
-def check_changelog(repo, env, files, staged):
+def check_changelog(repo, tree, env, files, staged):
     """Lint/Changelog: PR-scoped (changes/<PR number>.md), so per commit this is
     a note: src/ changes on this branch with no changes/*.md yet."""
     if not any(f.startswith("src/") for f in files):
@@ -230,7 +236,7 @@ def check_changelog(repo, env, files, staged):
                   "add changes/<PR number>.md before opening it")
 
 
-def check_merges(repo, env, files, staged):
+def check_merges(repo, tree, env, files, staged):
     """Lint/Merge: branch-level (merges cleanly into compatible/develop/master); not a commit check."""
     return Result("merges-cleanly", "Lint/Merge", "note", "branch-level check, run by CI on the PR")
 
@@ -242,13 +248,11 @@ CHECKS = [check_ocamlformat, check_require_ppxs, check_codeowners, check_rfcs, c
 
 def run(env, *, scope="staged", fix=False, caller="cli"):
     repo = env.repo
-    files = staged_files(repo) if scope == "staged" else all_files(repo)
-    results = []
-    for chk in CHECKS:
-        if chk is check_ocamlformat:
-            results.append(chk(repo, env, files, scope == "staged", fix=fix))
-        else:
-            results.append(chk(repo, env, files, scope == "staged"))
+    staged = scope == "staged"
+    files = staged_files(repo) if staged else all_files(repo)
+    with (staged_tree(repo) if staged else contextlib.nullcontext(repo)) as tree:
+        results = [chk(repo, tree, env, files, staged, **({"fix": fix} if chk is check_ocamlformat else {}))
+                   for chk in CHECKS]
     record(repo, scope, caller, files, results)
     return files, results
 

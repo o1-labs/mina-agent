@@ -27,7 +27,8 @@ exact diff, wait for explicit approval), and any `test` or `test_one` call
 (they can take minutes; say which test and its cost first).
 
 What is not possible here: editing build configuration or the Rust
-proof-systems boundary; running dune, opam, nix, cargo, or make directly.
+proof-systems boundary; running dune, opam, nix, cargo, make, pip, the OCaml
+compilers, or the opam-switch scripts directly.
 Those are denied structurally, do not attempt workarounds.
 
 When the discussion produces a conclusion worth keeping (a diagnosis, a plan,
@@ -57,7 +58,7 @@ def discuss(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     if e.mode == "none":
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
-    graph.derive_and_write(e)
+    graph.load_or_derive(e)
     notes = paths.notes_file(e.repo)
     if not notes.exists():
         notes.write_text(NOTES_TEMPLATE)

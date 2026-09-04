@@ -84,12 +84,10 @@ def pre_commit():
 
 @app.command("session-start")
 def session_start():
-    """SessionStart: re-derive the graph and hand the session its facts."""
-    from .. import env as envmod, graph, tools, banner
+    """SessionStart: hand the session its facts (tools.facts refreshes the graph cache)."""
+    from .. import env as envmod, tools, banner
     _payload()
     e = envmod.detect()
-    if e.mode != "none":
-        graph.derive_and_write(e)
     out = {"systemMessage": banner.render(e.to_dict()),
            "hookSpecificOutput": {"hookEventName": "SessionStart",
                                   "additionalContext": "\n".join(tools.facts())}}

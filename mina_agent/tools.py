@@ -30,7 +30,9 @@ DUNE_LOCK = threading.Lock()
 # --------------------------------------------------------------------------
 
 class Graph:
-    """derived.json, kept current against the dune metadata mtimes."""
+    """derived.json, loaded lazily and kept current against the dune metadata
+    mtimes. Nothing is derived at import: the first get() loads the on-disk
+    cache when its stamp matches and derives only when it does not."""
 
     STALE_CHECK_INTERVAL = 2.0   # seconds; bound the whole-tree walk under call storms
 
@@ -40,29 +42,15 @@ class Graph:
         self.stamp = None
         self.error = None
         self._checked_at = 0.0
-        self.refresh(force=True)
-
-    def _stamp(self):
-        st = []
-        for root, dirs, files in os.walk(os.path.join(self.env.repo, "src")):
-            dirs[:] = [d for d in dirs if d not in derivemod.SKIP_DIRS]
-            for f in files:
-                if f == "dune" or f == "dune-project" or f.endswith((".inc", ".opam")):
-                    p = os.path.join(root, f)
-                    try:
-                        st.append((p, os.stat(p).st_mtime_ns))
-                    except OSError:
-                        pass
-        return hash(tuple(sorted(st)))
 
     def refresh(self, force=False):
-        s = self._stamp()
-        if not force and s == self.stamp:
+        s = derivemod.stamp(self.env.repo)
+        if not force and s == self.stamp and self.data is not None:
             return False
         try:
-            self.data = derivemod.derive_and_write(self.env)
+            self.data = (derivemod.derive_and_write if force else derivemod.load_or_derive)(self.env)
             self.error = None
-        except BaseException as ex:  # SystemExit from derive.py included
+        except (Exception, SystemExit) as ex:  # describe-dune failures raise SystemExit
             self.error = f"derive failed: {ex}"
         self.stamp = s
         return True
@@ -139,8 +127,9 @@ def unit_of(relpath):
 # dune output parsing
 # --------------------------------------------------------------------------
 
-HEADER = re.compile(r'^File "([^"]+)", line (\d+), characters (\d+)-(\d+):')
-HEADER_NOCOL = re.compile(r'^File "([^"]+)", line (\d+)')
+# OCaml location header: File "f", line[s] N[-M][, characters A-B]:
+HEADER = re.compile(r'^File "(?P<file>[^"]+)", lines? (?P<line>\d+)(?:-(?P<line_end>\d+))?'
+                    r'(?:, characters (?P<col_start>\d+)-(?P<col_end>\d+))?')
 SEVERITY = re.compile(r"^(Error(?: \([^)]*\))?|Warning(?: \d+)?(?: \[[^\]]*\])?):\s*(.*)")
 
 
@@ -156,14 +145,14 @@ def parse_dune_errors(text):
     out = []
     cur = None
     for line in text.splitlines():
-        m = HEADER.match(line) or HEADER_NOCOL.match(line)
+        m = HEADER.match(line)
         if m:
             if cur:
                 out.append(cur)
-            g = m.groups()
-            cur = {"file": g[0], "line": int(g[1]),
-                   "col_start": int(g[2]) if len(g) > 2 else None,
-                   "col_end": int(g[3]) if len(g) > 3 else None,
+            g = m.groupdict()
+            num = lambda k: int(g[k]) if g[k] is not None else None
+            cur = {"file": g["file"], "line": int(g["line"]), "line_end": num("line_end"),
+                   "col_start": num("col_start"), "col_end": num("col_end"),
                    "severity": None, "message": ""}
             continue
         if cur is None:
@@ -221,7 +210,7 @@ def run_dune(argv, timeout_s):
     t0 = time.time()
     with DUNE_LOCK:
         try:
-            r = ENV.run(argv, capture=True, timeout=timeout_s)
+            r = ENV.run(argv, capture=True, timeout=timeout_s, lock=True)
             code, out = r.returncode, (r.stdout or "") + (r.stderr or "")
             timed_out = False
         except Exception as ex:  # subprocess.TimeoutExpired, without importing it
@@ -273,7 +262,11 @@ def resolve_test(name):
 def env_status() -> dict:
     """Detected toolchain mode (opam/nix/none), dune and OCaml versions, warnings."""
     d = ENV.to_dict()
-    d["derived_graph"] = {"ok": GRAPH.error is None, "error": GRAPH.error}
+    try:
+        GRAPH.get()
+        d["derived_graph"] = {"ok": True, "error": None}
+    except RuntimeError as ex:
+        d["derived_graph"] = {"ok": False, "error": str(ex)}
     return d
 
 
@@ -872,12 +865,12 @@ def facts() -> list:
     out = [f"mina-harness environment: mode={env.mode} activated={env.activated} "
            f"dune={env.dune_version} ocaml={env.ocaml}."]
     out += [f"warning: {w}" for w in env.warnings]
-    if GRAPH.error:
-        out.append(f"library graph unavailable: {GRAPH.error}")
-    else:
-        g = GRAPH.data
+    try:
+        g = GRAPH.get()
         out.append(f"library graph derived from dune files: {len(g['libraries'])} libraries, "
                    f"{len(g['tests'])} test units, {len(g['executables'])} executables.")
+    except RuntimeError as ex:
+        out.append(f"library graph unavailable: {ex}")
     b = m["boundary"]
     out.append("OCaml/Rust boundary (read-only, mutable=false): libraries "
                + ", ".join(b["libraries"]) + f" in {b['stubs_dir']} wrap crates "

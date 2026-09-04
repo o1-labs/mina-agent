@@ -97,6 +97,23 @@ def deny_rules():
     return _template()["permissions"]["deny"]
 
 
+BASH_CONTEXT_HOOK = {"type": "command", "command": "mina-agent hook pre-bash", "timeout": 10}
+
+
+def bash_deny_rules():
+    return [r for r in deny_rules() if r.startswith("Bash(")]
+
+
+def _hooks():
+    """The template's hooks plus one PreToolUse Bash entry per Bash deny rule,
+    gated by that rule through the hook `if` field. The deny list is the
+    single source of truth: the entry only attaches context, Claude Code's
+    matcher does the enforcing."""
+    hooks = _template()["hooks"]
+    bash = {"matcher": "Bash", "hooks": [{**BASH_CONTEXT_HOOK, "if": r} for r in bash_deny_rules()]}
+    return {**hooks, "PreToolUse": [*hooks.get("PreToolUse", []), bash]}
+
+
 def mina_agent_bin():
     return shutil.which("mina-agent") or os.path.abspath(sys.argv[0])
 
@@ -111,6 +128,7 @@ def session_settings():
     `claude --settings` so nothing is written into the repo's .claude/.
     Hook commands point at this binary."""
     t = _template()
+    t["hooks"] = _hooks()
     binp = mina_agent_bin()
     for matchers in t["hooks"].values():
         for m in matchers:
@@ -130,7 +148,7 @@ def sdk_hooks():
     prompt. Entries whose command has no in-process equivalent are skipped."""
     from claude_agent_sdk import HookMatcher
     out = {}
-    for event, matchers in _template()["hooks"].items():
+    for event, matchers in _hooks().items():
         if event == "SessionStart":
             continue
         for m in matchers:

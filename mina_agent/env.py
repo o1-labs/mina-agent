@@ -27,6 +27,7 @@ Design notes:
   * Nix is a reserved mode. Detection of an *already entered* nix shell is
     two lines; entering one is a stub (see _nix_activate).
 """
+import contextlib
 import dataclasses
 import json
 import os
@@ -140,13 +141,14 @@ class Env:
         as a seam so callers never build argv themselves."""
         return list(cmd)
 
-    def run(self, cmd, capture=False, cwd=None, **kw):
+    def run(self, cmd, capture=False, cwd=None, lock=False, **kw):
         """Run cmd in the activated env. Returns CompletedProcess.
 
-        dune invocations take a cross-process lock (harness/state/dune.lock):
-        dune 3.3.1 does not serialize concurrent instances on one _build, and
-        two of them (server + hook, or exec + a phase) corrupt each other's
-        temporary artifacts. ocamllsp's own read-only `dune ocaml-merlin`
+        lock=True takes the cross-process lock (harness/state/dune.lock) for
+        the duration: dune 3.3.1 does not serialize concurrent instances on
+        one _build, and two of them (server + hook, or exec + a phase) corrupt
+        each other's temporary artifacts. Callers that run dune, directly or
+        through a script, pass it; ocamllsp's own read-only `dune ocaml-merlin`
         calls are outside this and harmless."""
         argv = self.argv(cmd)
         env = self.activate()
@@ -156,7 +158,7 @@ class Env:
             _log(f"[harness] argv={json.dumps(argv)}")
             for k, (old, new) in _env_diff(os.environ, env).items():
                 _log(f"[harness] env {k}: {old!r} -> {new!r}")
-        with _dune_lock(self.repo, argv):
+        with _dune_lock(self.repo) if lock else contextlib.nullcontext():
             return subprocess.run(_with_limits(argv), env=env, cwd=cwd,
                                   capture_output=capture, text=True, **kw)
 
@@ -243,16 +245,10 @@ def _with_limits(argv):
     return ["/bin/sh", "-c", LIMITS_PRELUDE, "harness-env"] + list(argv)
 
 
-import contextlib
-
 
 @contextlib.contextmanager
-def _dune_lock(repo, argv):
-    """fcntl lock held for the duration of a dune invocation; no-op otherwise."""
-    first = os.path.basename(argv[0]) if argv else ""
-    if first != "dune":
-        yield
-        return
+def _dune_lock(repo):
+    """fcntl lock held for the duration of a dune invocation."""
     import fcntl
     from . import paths
     lock_path = paths.state_dir(repo) / "dune.lock"
@@ -289,12 +285,14 @@ def detect():
     dune = shutil.which("dune")
     dune_real = _real(dune)
     opam_dir = os.path.join(repo, "_opam")
-    switch_prefix = os.environ.get("OPAM_SWITCH_PREFIX")
 
     in_nix = bool(os.environ.get("IN_NIX_SHELL")) and bool(dune_real) and \
         dune_real.startswith("/nix/store/")
-    in_opam = bool(dune_real) and (_under(dune_real, opam_dir) or
-                                   _under(dune_real, switch_prefix))
+    # Only the repo-local switch counts. _under resolves symlinks on both
+    # sides, so dune from `_opam -> opam_switches/<sum>` matches; a foreign
+    # activated switch (OPAM_SWITCH_PREFIX elsewhere) does not, and falls
+    # through to the branch that activates the repo switch explicitly.
+    in_opam = _under(dune_real, opam_dir)
 
     if override:
         if override not in ("opam", "nix"):

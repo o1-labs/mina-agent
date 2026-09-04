@@ -18,7 +18,7 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
     if e.mode == "none":
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
-    g = graph.derive_and_write(e)
+    g = graph.load_or_derive(e)
     prompt = phases.render(phase, args)
     session = None
     if phase.get("session") == "profile":
@@ -119,5 +119,11 @@ def make_command(phase):
 
 
 def register(app):
+    """One command per valid phase. A phase whose front-matter cannot become
+    a command (e.g. an arg name that is not an identifier) is reported and
+    skipped rather than breaking every other command."""
     for phase in phases.all_phases():
-        app.command(phase["name"].replace("_", "-"))(make_command(phase))
+        try:
+            app.command(phase["name"].replace("_", "-"))(make_command(phase))
+        except (ValueError, TypeError) as ex:
+            sys.stderr.write(f"mina-agent: skipping phase {phase['name']}: {ex}\n")

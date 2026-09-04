@@ -1,4 +1,5 @@
 """Run a command in the activated switch (hidden)."""
+import os
 import sys
 
 import typer
@@ -17,4 +18,4 @@ def exec_(ctx: typer.Context):
     if e.mode == "none":
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
-    raise typer.Exit(e.run(args).returncode)
+    raise typer.Exit(e.run(args, lock=os.path.basename(args[0]) == "dune").returncode)

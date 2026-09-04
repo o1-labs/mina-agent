@@ -12,14 +12,15 @@ Nothing is vendored into the repo and nothing is installed into the user's
 Claude configuration, so plain `claude` sessions never see them.
 """
 import subprocess
+import tomllib
 from pathlib import Path
 
 from . import paths
 
 
 def declared():
-    from . import tools
-    return list(tools.MANIFEST_DATA.get("plugins", []))
+    with open(paths.MANIFEST, "rb") as fh:
+        return list(tomllib.load(fh).get("plugins", []))
 
 
 def plugin_root(repo):

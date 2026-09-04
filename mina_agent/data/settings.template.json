@@ -1,5 +1,5 @@
 {
-  "_comment": "Session settings for harness-invoked Claude sessions. `mina-agent discuss` passes this via `claude --settings`; headless phases derive SDK options (disallowed_tools, hooks) from it. It is never written into the repo's .claude/. The PreToolUse Bash entries are gated by Claude Code's own permission-rule matcher via the hook `if` field and only attach context; the deny rules are the enforcement. Docs: code.claude.com/docs/en/hooks (Hook object fields, JSON stdout output format), code.claude.com/docs/en/permissions (Read and Edit; Bash), code.claude.com/docs/en/cli-reference (--settings).",
+  "_comment": "Session settings for harness-invoked Claude sessions. `mina-agent discuss` passes this via `claude --settings`; headless phases derive SDK options (disallowed_tools, hooks) from it. It is never written into the repo's .claude/. The Bash deny rules are the enforcement, evaluated by Claude Code's own permission-rule matcher. agent.session_settings() adds one PreToolUse Bash hook entry per Bash deny rule, gated by the same rule through the hook `if` field, that only attaches context; the deny list is the single source of truth. Docs: code.claude.com/docs/en/hooks (Hook object fields, JSON stdout output format), code.claude.com/docs/en/permissions (Read and Edit; Bash), code.claude.com/docs/en/cli-reference (--settings).",
   "permissions": {
     "deny": [
       "Edit(/flake.nix)",
@@ -21,11 +21,37 @@
       "Bash(dune *)",
       "Bash(opam *)",
       "Bash(nix *)",
+      "Bash(nix-build *)",
       "Bash(nix-env *)",
       "Bash(nix-shell *)",
       "Bash(cargo *)",
       "Bash(rustup *)",
-      "Bash(make *)"
+      "Bash(make *)",
+      "Bash(ocamlfind *)",
+      "Bash(ocamlopt *)",
+      "Bash(ocamlc *)",
+      "Bash(pip *)",
+      "Bash(pip3 *)",
+      "Bash(./scripts/update-opam-switch.sh *)",
+      "Bash(scripts/update-opam-switch.sh *)",
+      "Bash(./scripts/pin-external-packages.sh *)",
+      "Bash(dune)",
+      "Bash(opam)",
+      "Bash(nix)",
+      "Bash(nix-build)",
+      "Bash(nix-env)",
+      "Bash(nix-shell)",
+      "Bash(cargo)",
+      "Bash(rustup)",
+      "Bash(make)",
+      "Bash(ocamlfind)",
+      "Bash(ocamlopt)",
+      "Bash(ocamlc)",
+      "Bash(pip)",
+      "Bash(pip3)",
+      "Bash(./scripts/update-opam-switch.sh)",
+      "Bash(scripts/update-opam-switch.sh)",
+      "Bash(./scripts/pin-external-packages.sh)"
     ]
   },
   "hooks": {
@@ -38,217 +64,6 @@
             "command": "mina-agent hook post-edit",
             "timeout": 600,
             "statusMessage": "harness: type-checking edited file"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "if": "Bash(dune *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(dune)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(ocamlfind *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(ocamlfind)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(ocamlopt *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(ocamlopt)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(ocamlc *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(ocamlc)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(opam *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(opam)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(nix *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(nix)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(nix-env *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(nix-env)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(nix-shell *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(nix-shell)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(nix-build *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(nix-build)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(cargo *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(cargo)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(rustup *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(rustup)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(make *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(make)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(pip *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(pip)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(pip3 *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(pip3)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(./scripts/update-opam-switch.sh *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(./scripts/update-opam-switch.sh)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(scripts/update-opam-switch.sh *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(scripts/update-opam-switch.sh)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(./scripts/pin-external-packages.sh *)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(./scripts/pin-external-packages.sh)",
-            "command": "mina-agent hook pre-bash",
-            "timeout": 10
           }
         ]
       }

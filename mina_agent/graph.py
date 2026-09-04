@@ -12,9 +12,11 @@ The tool is compiled on first use from mina_agent/data/vendor/describe-dune
 into harness/state/bin/describe-dune with the one-line build from its
 upstream Makefile. Never hand-edit derived.json.
 """
+import hashlib
 import json
 import os
 import shutil
+import contextlib
 import subprocess
 import sys
 import tempfile
@@ -26,8 +28,10 @@ VENDOR = str(paths.VENDOR_DESCRIBE_DUNE)
 # Same file set as nix/ocaml.nix: sourceFilesBySuffices ../src [...]
 KEEP_SUFFIXES = ("dune", "dune-project", ".inc", ".opam")
 SKIP_DIRS = {"_build", "node_modules", "_opam", "opam_switches", ".git"}
-# describe-dune's deps listing includes ppx drivers and instrumentation
-# backends. They are real dune deps but noise for "what does this code use".
+# describe-dune flattens libraries, ppx_runtime_libraries and pps into one
+# deps list. External ppx drivers and instrumentation backends are noise for
+# "what does this code use" and are set aside; anything local (including the
+# repo's own ppx rewriters and ppx_version.runtime) is a real edge.
 PPX_PREFIXES = ("ppx_", "bisect_ppx")
 
 
@@ -88,6 +92,29 @@ def run_describe(env):
         return json.loads(r.stdout), nfiles, notes
 
 
+def stamp(repo):
+    """Cache key for derived.json: a digest over (path, mtime_ns) of every dune
+    metadata file under src/ plus the vendored describe-dune commit. The graph
+    is a pure function of exactly those inputs."""
+    h = hashlib.sha1()
+    with open(os.path.join(VENDOR, "COMMIT")) as fh:
+        h.update(fh.read().strip().encode())
+    src = os.path.join(repo, "src")
+    entries = []
+    for root, dirs, files in os.walk(src):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for f in files:
+            if f == "dune" or f == "dune-project" or f.endswith((".inc", ".opam")):
+                p = os.path.join(root, f)
+                try:
+                    entries.append((os.path.relpath(p, repo), os.stat(p).st_mtime_ns))
+                except OSError:
+                    pass
+    for rel, mt in sorted(entries):
+        h.update(f"{rel}\0{mt}\n".encode())
+    return h.hexdigest()
+
+
 def reshape(desc):
     """describe-dune JSON -> lookup tables keyed by private library name."""
     libs, exes, tests = {}, {}, {}
@@ -108,6 +135,7 @@ def reshape(desc):
                 "package": u.get("package"),
                 "has_inline_tests": bool(u.get("has_inline_tests")),
                 "modules": u.get("modules"),
+                "implements": u.get("implements"),
                 "raw_deps": u.get("deps", []),
             }
             if u["type"] == "lib":
@@ -125,12 +153,12 @@ def reshape(desc):
     def resolve(raw):
         local, external, ppx = [], [], []
         for dep in raw:
-            if dep.startswith(PPX_PREFIXES) or dep.endswith(".ppx"):
-                ppx.append(dep)
-            elif dep in public_to_name:
+            if dep in public_to_name:
                 n = public_to_name[dep]
                 if n not in local:
                     local.append(n)
+            elif dep.startswith(PPX_PREFIXES) or dep.endswith(".ppx"):
+                ppx.append(dep)
             else:
                 external.append(dep)
         return local, external, ppx
@@ -138,6 +166,11 @@ def reshape(desc):
     for table in (libs, exes, tests):
         for name, rec in table.items():
             local, external, ppx = resolve(rec.pop("raw_deps"))
+            # an implementation depends on its virtual library
+            virt = public_to_name.get(rec["implements"])
+            if virt and virt not in local:
+                local.append(virt)
+            rec["implements"] = virt
             rec["deps"] = local
             rec["external_deps"] = external
             rec["ppx"] = ppx
@@ -179,7 +212,8 @@ def derive(env):
     with open(os.path.join(VENDOR, "COMMIT")) as fh:
         tool_commit = fh.read().strip()
     data_out = {
-        "generated_by": "harness/derive.py (do not hand-edit)",
+        "generated_by": "mina_agent.graph (do not hand-edit)",
+        "stamp": stamp(env.repo),
         "describe_dune_commit": tool_commit,
         "dune_version": env.dune_version,
         "git_head": head,
@@ -196,14 +230,44 @@ def summary(d):
             f"input_files={d['input_files']} notes={len(d['notes'])}")
 
 
+def write_json_atomic(path, data):
+    """Write via a sibling temp file + rename, so a concurrent reader sees the
+    old file or the new one, never a partial write."""
+    path = str(path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".derived-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(data, fh, indent=1)
+            fh.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def derive_and_write(env):
     """Derive and write harness/state/derived.json; returns the data."""
     d = derive(env)
-    out = paths.derived_json(env.repo)
-    with open(out, "w") as fh:
-        json.dump(d, fh, indent=1)
-        fh.write("\n")
+    write_json_atomic(paths.derived_json(env.repo), d)
     return d
+
+
+def load(repo):
+    """derived.json as written, or None when absent or unreadable."""
+    try:
+        with open(paths.derived_json(repo)) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def load_or_derive(env):
+    """The cached graph when its stamp matches the dune files, else a fresh one."""
+    d = load(env.repo)
+    if d is not None and d.get("stamp") == stamp(env.repo):
+        return d
+    return derive_and_write(env)
 
 
 def check(env):

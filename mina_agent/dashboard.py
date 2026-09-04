@@ -76,7 +76,7 @@ def _run_events(path):
                                           "builtin_tools": [t for t in tools if not t.startswith("mcp__")],
                                           "model": rec.get("data", {}).get("model")}})
             elif k == "AssistantMessage":
-                for b in rec.get("content") or []:
+                for b in trajectory.blocks(rec):
                     if b.get("block") == "ToolUseBlock":
                         c = traj.by_id.get(b["id"])
                         e = {**ev, "id": f"{ev['id']}:{b['id']}", "kind": "tool", "level": "info",
@@ -89,7 +89,7 @@ def _run_events(path):
                                        "summary": "assistant: " + _short(b["text"].strip().replace("\n", " "), 140),
                                        "detail": {"text": b["text"]}})
             elif k == "UserMessage":
-                for b in rec.get("content") or []:
+                for b in trajectory.blocks(rec):
                     if b.get("block") == "ToolResultBlock" and b.get("tool_use_id") in call_events:
                         c = traj.by_id[b["tool_use_id"]]
                         e = call_events[b["tool_use_id"]]

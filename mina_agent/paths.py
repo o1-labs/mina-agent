@@ -72,13 +72,11 @@ def usages_bin(repo):
 
 
 def git_hook(repo, name="pre-commit"):
-    """Path of a git hook, honouring core.hooksPath."""
+    """Path of a git hook, as git itself resolves it: honours core.hooksPath
+    (including `~`), worktrees and submodules (where .git is a file)."""
     import subprocess
-    r = subprocess.run(["git", "config", "--get", "core.hooksPath"], cwd=repo, capture_output=True, text=True)
-    base = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else Path(repo) / ".git" / "hooks"
-    if not base.is_absolute():
-        base = Path(repo) / base
-    return base / name
+    r = subprocess.run(["git", "rev-parse", "--git-path", "hooks"], cwd=repo, capture_output=True, text=True, check=True)
+    return (Path(repo) / r.stdout.strip()) / name
 
 
 def settings_local(repo):

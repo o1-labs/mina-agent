@@ -11,6 +11,9 @@ dependencies = [
   "sexpdata>=1.0",
 ]
 
+[dependency-groups]
+dev = ["pytest>=8"]
+
 [project.scripts]
 mina-agent = "mina_agent.cli:app"
 

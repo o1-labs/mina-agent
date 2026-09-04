@@ -15,6 +15,7 @@ import os
 import platform
 import re
 import shutil
+import sys
 import subprocess
 import tarfile
 import urllib.request
@@ -111,6 +112,9 @@ def status(repo):
     dest = binary(repo)
     have = version_of(dest) if dest.exists() else None
     if have == v:
+        # buildkite/Makefile hardcodes gsed on Darwin; without it every check_* target fails
+        if sys.platform == "darwin" and not shutil.which("gsed"):
+            return None, f"{dest} ({v}) present but gsed missing (brew install gnu-sed); Lint/Dhall skipped locally"
         return True, f"{dest} ({v}, matches CI)"
     on_path = shutil.which("dhall")
     pv = version_of(on_path) if on_path else None

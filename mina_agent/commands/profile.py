@@ -147,7 +147,7 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     if P.active(e.repo):
         typer.echo("a profiling session is already active; run mina-agent profile --restore first", err=True)
         raise typer.Exit(2)
-    g = graph.derive_and_write(e)
+    g = graph.load_or_derive(e)
     if not landmarks.present(e.repo):
         d, msg = landmarks.fetch(e)
         typer.echo(f"landmarks: {d} ({msg})", err=True)

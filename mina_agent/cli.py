@@ -7,6 +7,7 @@ runs and answers --help, but stays out of the top-level surface.
 import sys
 
 import typer
+from typer.core import TyperGroup
 from rich.console import Console
 from rich.panel import Panel
 
@@ -31,7 +32,7 @@ Typical workflow:
 Run mina-agent <command> --help for details."""
 
 
-class _Group(typer.core.TyperGroup):
+class _Group(TyperGroup):
     def format_help(self, ctx, formatter):
         super().format_help(ctx, formatter)
         Console(stderr=False).print(Panel(REMARK, title="Remark", title_align="left",

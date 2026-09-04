@@ -55,7 +55,7 @@ def discuss(focus: Optional[str] = typer.Option(None, "--focus", "-f",
     """
     from .. import env as envmod, graph, tools
     e = envmod.detect()
-    if e.mode == "none":
+    if not e.usable:
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
     graph.load_or_derive(e)

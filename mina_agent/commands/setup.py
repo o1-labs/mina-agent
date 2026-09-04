@@ -18,17 +18,17 @@ def setup():
     print(f"toolchain: mode={e.mode} activated={e.activated} dune={e.dune_version} ocaml={e.ocaml}")
     for w in e.warnings:
         print(f"  warning: {w}")
-    if e.mode == "none":
+    if not e.usable:
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
     aenv = e.activate()
     for name, why in (("ocamlmerlin", "type_at / definition tools"),
                       ("claude", "headless phases and discuss")):
         found = shutil.which(name, path=aenv.get("PATH"))
-        print(f"{name:12s} {'ok  ' + found if found else 'MISSING  (' + why + ')'}")
+        print(f"{name:12s} {f'ok  {found}' if found else f'MISSING  ({why})'}")
     from .. import dhall
     path, msg = dhall.fetch(e.repo)
-    print(f"dhall        {'ok  ' + msg if path else 'MISSING  ' + msg}")
+    print(f"dhall        {f'ok  {msg}' if path else f'MISSING  {msg}'}")
     tool = graph.build_tool(e)
     print(f"describe-dune built: {tool}")
     from .. import usages

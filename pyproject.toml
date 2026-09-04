@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pyright>=1.1"]
 
 [project.scripts]
 mina-agent = "mina_agent.cli:app"
@@ -23,3 +23,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["mina_agent"]
+
+[tool.pyright]
+include = ["mina_agent", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+reportMissingImports = false

@@ -13,9 +13,9 @@ from .. import agent, paths, phases
 
 
 def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model):
-    from .. import env as envmod, graph
+    from .. import env as envmod, graph, profile as P
     e = envmod.detect()
-    if e.mode == "none":
+    if not e.usable:
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
     g = graph.load_or_derive(e)
@@ -24,7 +24,7 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
     if phase.get("session") == "profile":
         # instrument the focus for the whole run; the model gets the same
         # Session block an interactive profile session starts with
-        from .. import profile as P, tools
+        from .. import tools
         from .profile import _resolve_focus, _workloads
         if P.active(e.repo):
             typer.echo("a profiling session is already active; run mina-agent profile --restore first", err=True)
@@ -41,7 +41,7 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model)
     if dry_run:
         print("[dry-run] options:\n" + json.dumps(agent.options_summary(options), indent=1, default=str))
         print("\n[dry-run] prompt:\n" + prompt)
-        print("\n[dry-run] system prompt addition:\n" + options.system_prompt["append"])
+        print("\n[dry-run] system prompt addition:\n" + agent.system_addition())
         return
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = paths.logs_dir(e.repo) / f"{stamp}-{phase['name']}.jsonl"
@@ -107,7 +107,7 @@ def make_command(phase):
         inspect.Parameter("model", inspect.Parameter.KEYWORD_ONLY, annotation=Optional[str],
                           default=typer.Option(None, "--model", help="Model alias or id.")),
     ]
-    command.__signature__ = inspect.Signature(params)
+    setattr(command, "__signature__", inspect.Signature(params))
     command.__annotations__ = {p.name: p.annotation for p in params}
     command.__name__ = phase["name"]
     command.__doc__ = (f"{phase['summary']}\n\n"

@@ -33,7 +33,7 @@ def resolve(env):
     p = os.environ.get("MINA_AGENT_OCAMLLSP")
     if p:
         return (p, "MINA_AGENT_OCAMLLSP") if os.path.isfile(p) else (None, f"MINA_AGENT_OCAMLLSP={p} is not a file")
-    aenv = env.activate() if env.mode != "none" else dict(os.environ)
+    aenv = env.activate() if env.usable else dict(os.environ)
     p = shutil.which("ocamllsp", path=aenv.get("PATH"))
     if p:
         return p, "PATH (project switch)"

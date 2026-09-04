@@ -29,7 +29,7 @@ def init():
     """
     from .. import env as envmod, graph
     e = envmod.detect()
-    if e.mode == "none":
+    if not e.usable:
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
     paths.state_dir(e.repo)

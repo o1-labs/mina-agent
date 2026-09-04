@@ -16,7 +16,9 @@ HEADS = {
 
 
 def _head(rule):
-    return re.fullmatch(r"Bash\((.+?)(?: \*)?\)", rule).group(1)
+    m = re.fullmatch(r"Bash\((.+?)(?: \*)?\)", rule)
+    assert m, rule
+    return m.group(1)
 
 
 def _bash_if_rules(settings):

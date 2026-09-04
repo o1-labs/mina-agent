@@ -10,9 +10,9 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
-import time
 import time
 import tomllib
 
@@ -63,8 +63,8 @@ class Graph:
         if now - self._checked_at >= self.STALE_CHECK_INTERVAL:
             self._checked_at = now
             self.refresh()
-        if self.error:
-            raise RuntimeError(self.error)
+        if self.error or self.data is None:
+            raise RuntimeError(self.error or "graph not derived")
         return self.data
 
 
@@ -203,7 +203,7 @@ def tail(text):
 
 def run_dune(argv, timeout_s):
     """Run argv through the env adapter under the dune lock."""
-    if ENV.mode == "none":
+    if not ENV.usable:
         raise RuntimeError("no usable toolchain: " + "; ".join(ENV.reasons))
     from . import profile as P
     argv = P.dune_argv(ENV.repo, argv)   # --instrument-with landmarks while a profiling session is active
@@ -213,12 +213,10 @@ def run_dune(argv, timeout_s):
             r = ENV.run(argv, capture=True, timeout=timeout_s, lock=True)
             code, out = r.returncode, (r.stdout or "") + (r.stderr or "")
             timed_out = False
-        except Exception as ex:  # subprocess.TimeoutExpired, without importing it
-            if type(ex).__name__ != "TimeoutExpired":
-                raise
+        except subprocess.TimeoutExpired as ex:
             code, timed_out = -1, True
-            out = ((ex.stdout or b"") if isinstance(ex.stdout, bytes) else (ex.stdout or ""))
-            if isinstance(out, bytes):
+            out = ex.stdout or b""
+            if isinstance(out, bytes):  # bytes even with text=True
                 out = out.decode(errors="replace")
     return code, out, round(time.time() - t0, 1), timed_out
 

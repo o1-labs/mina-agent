@@ -162,7 +162,7 @@ def _digest(repo):
 
 def make_handler(repo):
     class H(BaseHTTPRequestHandler):
-        def log_message(self, *a):
+        def log_message(self, format, *args):
             pass
 
         def _send(self, body, ctype, code=200):

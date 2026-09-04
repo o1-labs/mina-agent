@@ -135,7 +135,7 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
         for f in rep["source_edits"]:
             print(f"  source edit left in place (yours to keep or revert): {f}")
         return
-    if e.mode == "none":
+    if not e.usable:
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
     if not focus:

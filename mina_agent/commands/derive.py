@@ -7,7 +7,7 @@ def derive(check: bool = typer.Option(False, "--check", help="Exit 1 if derived.
     """Write harness/state/derived.json from the dune files via describe-dune."""
     from .. import env as envmod, graph, paths
     e = envmod.detect()
-    if e.mode == "none":
+    if not e.usable:
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
     if build:

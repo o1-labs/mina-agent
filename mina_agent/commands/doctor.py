@@ -32,17 +32,17 @@ def _run(argv, cwd=None):
 # ---- checks: each takes the detected env and returns one or more Checks ----
 
 def toolchain(e):
-    yield Check("toolchain", OK if e.mode != "none" else FAIL,
+    yield Check("toolchain", OK if e.usable else FAIL,
                 f"mode={e.mode} activated={e.activated} dune={e.dune_version} ocaml={e.ocaml}")
-    b = e.build_dir or {}
-    drift = bool(b.get("built_by")) and b["built_by"] != e.mode
-    yield Check("_build provenance", FAIL if drift else OK, f"built_by={b.get('built_by')} exists={b.get('exists')}")
+    b = e.build_dir
+    drift = bool(b.built_by) and b.built_by != e.mode
+    yield Check("_build provenance", FAIL if drift else OK, f"built_by={b.built_by} exists={b.exists}")
     for w in e.warnings:
         yield Check("warning", NOTE, w)
 
 
 def binaries(e):
-    if e.mode == "none":
+    if not e.usable:
         return
     path = e.activate().get("PATH")
     for name in ("ocamlmerlin", "claude"):
@@ -52,7 +52,7 @@ def binaries(e):
 
 
 def lsp(e):
-    if e.mode == "none":
+    if not e.usable:
         return
     from .. import lsp as L
     p, source = L.resolve(e)
@@ -64,7 +64,7 @@ def lsp(e):
 
 
 def opam_export(e):
-    if e.mode == "none":
+    if not e.usable:
         return
     r = _run([os.path.join(e.repo, "_opam", "bin", "check_opam_switch"), "opam.export"], cwd=e.repo)
     out = r.stdout + r.stderr
@@ -80,7 +80,7 @@ def graph(e):
     tool = paths.describe_dune_bin(e.repo)
     yield Check("describe-dune", OK if tool.exists() else FAIL, str(tool) if tool.exists() else "run mina-agent setup")
     dj = paths.derived_json(e.repo)
-    if dj.exists() and tool.exists() and e.mode != "none":
+    if dj.exists() and tool.exists() and e.usable:
         fresh = G.check(e)
         yield Check("derived graph", OK if fresh else FAIL, str(dj) + ("" if fresh else " is stale; rerun mina-agent init"))
     else:
@@ -91,8 +91,8 @@ def graph(e):
     from .. import landmarks, profile as P
     ok, detail = landmarks.status(e.repo)
     yield Check("landmarks", OK if ok else NOTE, detail)
-    if P.active(e.repo):
-        s = P.load(e.repo)
+    s = P.load(e.repo)
+    if s:
         yield Check("profiling session", NOTE, f"active since {s['started']} on {s['focus']} "
                     f"({len(s['injected'])} dune files instrumented); mina-agent profile --restore ends it")
 

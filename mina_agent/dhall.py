@@ -97,7 +97,10 @@ def fetch(repo):
         if not member:
             return None, f"no bin/dhall in {url}"
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with tf.extractfile(member) as src, open(dest, "wb") as out:
+        src = tf.extractfile(member)
+        if src is None:
+            return None, f"{member.name} in {url} is not a regular file"
+        with src, open(dest, "wb") as out:
             shutil.copyfileobj(src, out)
     dest.chmod(0o755)
     have = version_of(dest)

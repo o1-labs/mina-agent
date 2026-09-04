@@ -32,7 +32,7 @@ def lint(all_: bool = typer.Option(False, "--all", help="Whole tree instead of t
     """
     from .. import env as envmod
     e = envmod.detect()
-    if e.mode == "none":
+    if not e.usable:
         typer.echo("no usable toolchain: " + "; ".join(e.reasons), err=True)
         raise typer.Exit(3)
     if history:

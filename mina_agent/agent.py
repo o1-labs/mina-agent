@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+from typing import Any, cast
 
 from . import lsp, paths
 from .trajectory import Trajectory, to_record
@@ -26,7 +27,7 @@ from .trajectory import Trajectory, to_record
 # hooks (in-process for headless runs; `mina-agent hook ...` for interactive)
 # --------------------------------------------------------------------------
 
-LOG = {"fh": None, "traj": None}
+LOG: dict[str, Any] = {"fh": None, "traj": None}
 
 
 def record_hook(event, tool, inp, output):
@@ -178,7 +179,7 @@ def build_options(phase, env, *, max_turns=None, max_budget_usd=None, model=None
     disallowed = list(dict.fromkeys(phase["disallowed_tools"] + deny_rules()))
     return ClaudeAgentOptions(
         system_prompt={"type": "preset", "preset": "claude_code", "append": system_addition()},
-        mcp_servers=mcp_config()["mcpServers"],
+        mcp_servers=cast(Any, mcp_config()["mcpServers"]),
         strict_mcp_config=True,
         allowed_tools=phase["allowed_tools"],
         disallowed_tools=disallowed,

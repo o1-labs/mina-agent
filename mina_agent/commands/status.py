@@ -17,5 +17,4 @@ def status(as_json: bool = typer.Option(False, "--json", help="Print the full JS
         print(f"  {r}")
     for w in d["warnings"]:
         print(f"  ! {w}")
-    b = d["build_dir"] or {}
-    print(f"_build: exists={b.get('exists')} built_by={b.get('built_by')}")
+    print(f"_build: exists={e.build_dir.exists} built_by={e.build_dir.built_by}")

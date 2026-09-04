@@ -36,7 +36,7 @@ import subprocess
 import sys
 import time
 
-MODES = ("opam", "nix", "none")
+from .model import BuildProvenance, Mode
 
 # Environment variables that change dune's behaviour. Reported, never set.
 REPORTED_VARS = ("DUNE_PROFILE", "KIMCHI_STUBS", "OPAM_SWITCH_PREFIX",
@@ -56,21 +56,19 @@ def _real(p):
     return os.path.realpath(p) if p else None
 
 
-def _under(path, prefix):
+def _under(path, prefix) -> bool:
     if not path or not prefix:
         return False
-    path = _real(path)
-    prefix = _real(prefix).rstrip(os.sep) + os.sep
-    return path.startswith(prefix)
+    return os.path.realpath(path).startswith(os.path.realpath(prefix).rstrip(os.sep) + os.sep)
 
 
-def _build_provenance(repo):
+def _build_provenance(repo) -> BuildProvenance:
     """Read _build/log and classify the ocamlc that produced it."""
     log = os.path.join(repo, "_build", "log")
-    info = {"exists": os.path.isdir(os.path.join(repo, "_build")),
-            "built_by": None, "ocamlc": None}
+    exists = os.path.isdir(os.path.join(repo, "_build"))
     if not os.path.exists(log):
-        return info
+        return BuildProvenance(exists)
+    ocamlc = None
     try:
         with open(log, encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -78,37 +76,41 @@ def _build_provenance(repo):
                     tok = [t for t in line.split() if t.endswith("ocamlc.opt")
                            or t.endswith("/ocamlc")]
                     if tok:
-                        info["ocamlc"] = tok[0]
+                        ocamlc = tok[0]
                         break
                 if line.startswith("$"):
                     break  # first command should have been the -config probe
     except OSError:
-        return info
-    oc = info["ocamlc"]
-    if oc:
-        if oc.startswith("/nix/store/"):
-            info["built_by"] = "nix"
-        elif _under(oc, os.path.join(repo, "_opam")) or "opam" in oc:
-            info["built_by"] = "opam"
-        else:
-            info["built_by"] = "unknown"
-    return info
+        return BuildProvenance(exists)
+    if not ocamlc:
+        return BuildProvenance(exists)
+    if ocamlc.startswith("/nix/store/"):
+        built_by = "nix"
+    elif _under(ocamlc, os.path.join(repo, "_opam")) or "opam" in ocamlc:
+        built_by = "opam"
+    else:
+        built_by = "unknown"
+    return BuildProvenance(exists, built_by, ocamlc)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(kw_only=True)
 class Env:
-    mode: str
+    mode: Mode
     activated: bool
-    reasons: list
-    warnings: list
+    reasons: list[str]
+    warnings: list[str]
     repo: str
-    dune: str = None
-    dune_version: str = None
-    ocaml: str = None
-    ocaml_bin: str = None
-    build_dir: dict = None
-    env: dict = None
-    _activated_env: dict = dataclasses.field(default=None, repr=False)
+    build_dir: BuildProvenance
+    env: dict[str, str | None]
+    dune: str | None = None
+    dune_version: str | None = None
+    ocaml: str | None = None
+    ocaml_bin: str | None = None
+    _activated_env: dict[str, str] | None = dataclasses.field(default=None, repr=False)
+
+    @property
+    def usable(self) -> bool:
+        return self.mode is not Mode.NONE
 
     # -- activation ---------------------------------------------------------
 
@@ -116,19 +118,17 @@ class Env:
         """Return a complete environment dict for this mode. Cached."""
         if self._activated_env is not None:
             return self._activated_env
-        if self.mode == "none":
+        if self.mode is Mode.NONE:
             raise RuntimeError(
                 "no usable toolchain: activate the opam switch "
                 "(e.g. `direnv allow` or `eval $(opam env --switch . --set-switch)`) "
                 "or enter `nix develop` first")
         if self.activated:
             self._activated_env = dict(os.environ)
-        elif self.mode == "opam":
+        elif self.mode is Mode.OPAM:
             self._activated_env = _opam_activate(self.repo)
-        elif self.mode == "nix":
-            self._activated_env = _nix_activate(self.repo)
         else:
-            raise RuntimeError(f"unknown mode {self.mode}")
+            self._activated_env = _nix_activate(self.repo)
         # Skip the JS/wasm bindings the way CI does (buildkite unit-test.sh):
         # building them regenerates committed .node/.d.ts artifacts under
         # kimchi_bindings/js, dirtying a clean tree. The harness only builds
@@ -167,6 +167,7 @@ class Env:
     def to_dict(self):
         d = dataclasses.asdict(self)
         d.pop("_activated_env", None)
+        d["mode"] = str(self.mode)
         return d
 
     def to_json(self):
@@ -278,7 +279,7 @@ def _log(msg):
 
 # -- detection ---------------------------------------------------------------
 
-def detect():
+def detect() -> Env:
     repo = _repo_root()
     reasons, warnings = [], []
     override = os.environ.get("HARNESS_MODE")
@@ -295,34 +296,34 @@ def detect():
     in_opam = _under(dune_real, opam_dir)
 
     if override:
-        if override not in ("opam", "nix"):
-            raise SystemExit(
-                _usage_error(f"HARNESS_MODE={override!r}: expected opam or nix"))
-        mode = override
+        if override not in (Mode.OPAM, Mode.NIX):
+            sys.stderr.write(f"mina-agent: HARNESS_MODE={override!r}: expected opam or nix\n")
+            raise SystemExit(2)
+        mode = Mode(override)
         reasons.append(f"HARNESS_MODE={override} override")
-        if mode == "nix":
+        if mode is Mode.NIX:
             warnings.append("nix mode is a stub and unverified on this machine")
             activated = in_nix
         else:
             activated = in_opam
     elif in_nix:
-        mode, activated = "nix", True
+        mode, activated = Mode.NIX, True
         reasons.append(f"IN_NIX_SHELL set and dune is {dune_real}")
     elif in_opam:
-        mode, activated = "opam", True
+        mode, activated = Mode.OPAM, True
         reasons.append(f"dune resolves to {dune_real}, under the repo-local switch")
     elif os.path.exists(opam_dir) and shutil.which("opam"):
-        mode, activated = "opam", False
+        mode, activated = Mode.OPAM, False
         reasons.append(f"{opam_dir} exists and opam is on PATH, "
                        "but dune on PATH is not from it")
     else:
-        mode, activated = "none", False
+        mode, activated = Mode.NONE, False
         reasons.append("no repo-local _opam switch reachable and not in a nix shell")
 
     build = _build_provenance(repo)
-    if build["built_by"] and mode != "none" and build["built_by"] != mode:
+    if build.built_by and mode is not Mode.NONE and build.built_by != mode:
         warnings.append(
-            f"_build was produced by {build['built_by']} but mode is {mode}; "
+            f"_build was produced by {build.built_by} but mode is {mode}; "
             "a full rebuild is likely")
     if not shutil.which("ocamllsp"):
         warnings.append("ocamllsp not on PATH")
@@ -333,24 +334,24 @@ def detect():
             repo=repo, build_dir=build,
             env={k: os.environ.get(k) for k in REPORTED_VARS})
 
-    if mode != "none":
+    if mode is not Mode.NONE:
         try:
             aenv = e.activate()
             e.dune = shutil.which("dune", path=aenv.get("PATH"))
             ocamlc = shutil.which("ocamlc", path=aenv.get("PATH"))
             e.ocaml_bin = os.path.dirname(ocamlc) if ocamlc else None
-            e.dune_version = _version([e.dune, "--version"], aenv)
-            e.ocaml = _version([ocamlc, "-version"], aenv)
+            e.dune_version = _version(e.dune, "--version", env=aenv)
+            e.ocaml = _version(ocamlc, "-version", env=aenv)
         except Exception as ex:  # activation failed; report, don't crash
             e.warnings.append(f"activation failed: {ex}")
     return e
 
 
-def _version(argv, env):
-    if not argv[0]:
+def _version(exe, flag, *, env):
+    if not exe:
         return None
     try:
-        return subprocess.run(argv, env=env, capture_output=True, text=True,
+        return subprocess.run([exe, flag], env=env, capture_output=True, text=True,
                               timeout=30).stdout.strip() or None
     except Exception:
         return None

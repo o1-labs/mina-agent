@@ -57,10 +57,21 @@ def cone(g, kind, key):
     return units
 
 
+def unit_record(g, kind, key):
+    return g[{"lib": "libraries", "exe": "executables", "test": "tests"}[kind]][key]
+
+
+def check_aliases(g, units):
+    """One @<dir>/check per directory of the units: building them (re)writes
+    every .cmt the units own. dune is incremental, so a fresh cone costs one
+    dune invocation."""
+    return [f"@{d}/check" for d in sorted({unit_record(g, k, key)["dir"] for k, key in units})]
+
+
 def objs_dir(repo, g, kind, key):
     """Where dune puts a unit's .cmt files: .<lib>.objs for libraries,
     .<name>.eobjs for executables and tests."""
-    rec = g[{"lib": "libraries", "exe": "executables", "test": "tests"}[kind]][key]
+    rec = unit_record(g, kind, key)
     name = key if kind == "lib" else rec["name"]
     sub = f".{name}.objs" if kind == "lib" else f".{name}.eobjs"
     return os.path.join(repo, "_build", "default", rec["dir"], sub, "byte")

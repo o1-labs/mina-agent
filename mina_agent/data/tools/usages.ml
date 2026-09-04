@@ -12,7 +12,9 @@
    cstr_loc for a constructor, lbl_loc for a record field, type_loc for a
    type. A binding declared in an .mli is seen by other units through that
    interface, so the matching declaration there (same kind, name, and module
-   path) counts as the same binding.
+   path) counts as the same binding. `include M` re-exports M's declarations
+   at the include site, so a value defined in `module T` and exported by
+   `include T` matches the interface's top-level declaration of it.
 
    Pass 2 walks every listed unit and reports each non-ghost reference whose
    carried location is one of those. A type reference is a path; it is
@@ -82,7 +84,7 @@ type decl =
 let default = Tast_iterator.default_iterator
 
 let decls_of annots =
-  let out = ref [] and path = ref [] in
+  let out = ref [] and path = ref [] and includes = ref [] in
   let add ?(toplevel = true) kind name name_loc key =
     out := { kind; name; path = List.rev !path; toplevel; name_loc; key } :: !out
   in
@@ -160,6 +162,10 @@ let decls_of annots =
               add Value vd.val_name.txt vd.val_name.loc (key_of vd.val_val.val_loc)
           | Tstr_type (_, tds) ->
               type_decls tds
+          | Tstr_include { incl_mod = { mod_desc = Tmod_ident (p, _); _ }; _ } ->
+              (* declarations under (site @ M) are also visible at site *)
+              let site = List.rev !path in
+              includes := (site @ String.split_on_char '.' (Path.name p), site) :: !includes
           | _ ->
               default.structure_item sub si )
     ; signature_item =
@@ -185,7 +191,7 @@ let decls_of annots =
       it.signature it sg
   | _ ->
       () ) ;
-  !out
+  (!out, List.rev !includes)
 
 (* the identifier under the cursor in the source: ppx-derived bindings
    (equal, compare, b__008_ ...) share the name location of the declaration
@@ -253,11 +259,31 @@ let find_target decls =
   | d :: _ ->
       Some d
 
-let twins d others =
+let rec drop_prefix pre l =
+  match (pre, l) with
+  | [], rest ->
+      Some rest
+  | p :: pre', x :: l' when p = x ->
+      drop_prefix pre' l'
+  | _ ->
+      None
+
+(* every module path a declaration is visible at: its own, plus the include
+   sites that re-export the module it lives in *)
+let exported_paths includes d =
+  d.path
+  :: List.filter_map
+       (fun (inner, site) -> Option.map (fun rest -> site @ rest) (drop_prefix inner d.path))
+       includes
+
+let twins includes d others =
   if not d.toplevel then []
   else
+    let mine = exported_paths includes d in
     List.filter
-      (fun o -> o.toplevel && o.kind = d.kind && o.name = d.name && o.path = d.path)
+      (fun o ->
+        o.toplevel && o.kind = d.kind && o.name = d.name
+        && List.exists (fun p -> List.mem p (exported_paths includes o)) mine )
       others
 
 (* the owning unit's .cmt/.cmti are recognised by module name: <stem>, or a
@@ -420,11 +446,13 @@ let () =
   let here, there =
     if Filename.check_suffix def_file ".mli" then (!mli, !ml) else (!ml, !mli)
   in
-  let here =
-    match here with
-    | Some d ->
-        d
-    | None ->
+  let here, includes =
+    match (here, !ml) with
+    | Some (d, _), Some (_, incl) ->
+        (d, incl)
+    | Some (d, _), None ->
+        (d, [])
+    | None, _ ->
         fail (Printf.sprintf "the unit owning %s is not compiled (no .cmt among the inputs)" def_file)
   in
   let target =
@@ -434,7 +462,8 @@ let () =
     | None ->
         fail (Printf.sprintf "no declaration spans %s:%d:%d" def_file def_line def_col)
   in
-  let ids = target :: twins target (Option.value there ~default:[]) in
+  let there = match there with Some (d, _) -> d | None -> [] in
+  let ids = target :: twins includes target there in
   List.iter (fun d -> Hashtbl.replace keys d.key ()) ids ;
   (* pass 2 *)
   let want_types = target.kind = Type in

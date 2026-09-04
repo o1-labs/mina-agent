@@ -577,7 +577,7 @@ def errors(file: str, timeout_s: int = 60) -> dict:
     return out
 
 
-def usages(file: str, line: int, col: int, timeout_s: int = 120) -> dict:
+def usages(file: str, line: int, col: int, timeout_s: int = 120, refresh: bool = True) -> dict:
     """Every use of the binding at file:line:col (1-based) across the repo:
     its library plus everything that depends on it, executables and tests
     included. Read from the typed trees the compiler wrote (.cmt in _build),
@@ -585,10 +585,14 @@ def usages(file: str, line: int, col: int, timeout_s: int = 120) -> dict:
     ppx-generated references excluded. The position may be the definition or
     any use of it (merlin resolves it to the definition first). Values,
     constructors, record fields, and types; not modules (use dependents_of
-    for who depends on a library). Sees only compiled units: `unbuilt` lists
-    those in scope it could not read."""
+    for who depends on a library). The typed trees are refreshed first
+    (`dune build @<dir>/check` over the whole scope, incremental, so stale
+    trees from an older checkout or a native-only build cannot hide or
+    misplace references; refresh=false skips that); `unbuilt` lists units
+    that still have no tree."""
     from . import usages as U
     g = GRAPH.get()
+    refreshed = {}
 
     def attempt(def_file, dl, dc):
         u = unit_of(def_file)
@@ -596,6 +600,10 @@ def usages(file: str, line: int, col: int, timeout_s: int = 120) -> dict:
             raise ValueError(f"{def_file} is not inside any described dune unit")
         kind, key, _ = u
         units = U.cone(g, kind, key)
+        if refresh:
+            r = run_dune(["dune", "build", *U.check_aliases(g, units)], max(timeout_s, 600))
+            refreshed.update({"refresh_s": r.elapsed_s, "refresh_ok": r.ok,
+                              **({} if r.ok else {"refresh_errors": to_json(split_diags(r.out)[0][:10])})})
         cmts, unbuilt = U.cmt_files(ENV.repo, g, units)
         return U.run(ENV, def_file, dl, dc, cmts, timeout_s), key, units, unbuilt
 
@@ -620,7 +628,7 @@ def usages(file: str, line: int, col: int, timeout_s: int = 120) -> dict:
     elapsed = round(time.time() - t0, 1)
     if "error" in res:
         return {"ok": False, "file": def_file, "line": dl, "col": dc, "elapsed_s": elapsed,
-                "unbuilt": unbuilt, "note": res["error"]}
+                "unbuilt": unbuilt, "note": res["error"], **refreshed}
     by_lib = {}
     for h in res["usages"]:
         hu = unit_of(h["file"])
@@ -633,7 +641,7 @@ def usages(file: str, line: int, col: int, timeout_s: int = 120) -> dict:
            "by_library": dict(sorted(by_lib.items(), key=lambda kv: (-kv[1], str(kv[0])))),
            "scope": {"units": len(units), "files_read": res["files_read"],
                      "unreadable": len(res["unreadable"])},
-           "unbuilt": unbuilt, "unresolved_types": res["unresolved_types"],
+           "unbuilt": unbuilt, "unresolved_types": res["unresolved_types"], **refreshed,
            "unresolved_files": res.get("unresolved_files", []), "elapsed_s": elapsed}
     notes = []
     if unbuilt:

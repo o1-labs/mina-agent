@@ -7,3 +7,5 @@ __pycache__/
 .venv/
 # secrets sourced into harness sessions (see .envrc.example)
 .envrc
+.pytest_cache/
+.ruff_cache/

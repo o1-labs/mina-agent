@@ -20,7 +20,10 @@ alloc_mb; self excludes callees), profile_callers (who calls a function and
 what it calls, with time under each edge), profile_diff (per-function change
 between two profiles of the same workload), profile_add_library (put another
 library under instrumentation when the hot path crosses into it; windows
-outside the instrumented set are inert), plus the usual build, check,
+outside the instrumented set are inert), profile_link_impl (link a chosen
+implementation of a virtual library into the workload: test runners get
+the default one, e.g. disk_cache's identity, not what the daemon uses),
+plus the usual build, check,
 errors, usages, find_module, type_at, definition, and file reads.
 
 You have about 40 tool calls in total. Spend them like this:

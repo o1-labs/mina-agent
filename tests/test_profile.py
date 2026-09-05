@@ -11,7 +11,7 @@ def _git(cwd, *a):
     subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True)
 
 
-def _repo(tmp_path, monkeypatch):
+def _repo(tmp_path, monkeypatch) -> tuple[str, dict]:
     repo = tmp_path / "r"
     (repo / "src" / "x").mkdir(parents=True)
     (repo / "src" / "x" / "dune").write_text(DUNE)
@@ -21,7 +21,7 @@ def _repo(tmp_path, monkeypatch):
     _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "root")
     monkeypatch.setattr(landmarks, "present", lambda repo: True)
     monkeypatch.setattr(paths, "HARNESS", tmp_path / "harness")     # generated state lives under the harness checkout
-    return str(repo), {"libraries": {"x": {"dir": "src/x", "deps": []}}}
+    return str(repo), {"libraries": {"x": {"dir": "src/x", "deps": [], "has_inline_tests": True}}}
 
 
 def test_inject_stanza_targets_the_named_library_only():
@@ -160,4 +160,69 @@ def test_restore_archives_and_resume_recreates_with_profiles(tmp_path, monkeypat
     s = P.resume(repo, g)
     assert P.active(repo) and s.libraries == ("x",) and s.profiles == (entry,)
     assert "landmarks" in Path(repo, "src/x/dune").read_text()
+    P.restore(repo)
+
+
+INLINE_BARE = "(library\n (name x)\n (inline_tests)\n (libraries core))\n"
+INLINE_FLAGS = "(library\n (name x)\n (inline_tests\n  (flags -verbose))\n (libraries core))\n"
+INLINE_LIBS = "(library\n (name x)\n (inline_tests\n  (libraries a.b))\n (libraries core))\n"
+TESTS = "(tests\n (names t_one t_two)\n (libraries core x))\n"
+EXE = "(executable\n (name main))\n"
+
+
+def _link(text, kind, name, lib) -> str:
+    out = P.link_library(text, kind, name, lib)
+    assert out is not None
+    return out
+
+
+def test_link_library_inline_shapes():
+    assert "(inline_tests\n  (libraries disk_cache.lmdb))" in _link(INLINE_BARE, "lib", "x", "disk_cache.lmdb")
+    assert "(flags -verbose)\n  (libraries disk_cache.lmdb))" in _link(INLINE_FLAGS, "lib", "x", "disk_cache.lmdb")
+    out = _link(INLINE_LIBS, "lib", "x", "disk_cache.lmdb")
+    assert "(libraries a.b\n   disk_cache.lmdb)" in out
+    assert P.link_library(out, "lib", "x", "disk_cache.lmdb") == out             # idempotent
+    assert P.link_library("(library\n (name x))\n", "lib", "x", "z") is None      # no inline tests
+    assert P.link_library(INLINE_BARE, "lib", "nope", "z") is None
+
+
+def test_link_library_tests_and_exe():
+    assert "(libraries core x\n  disk_cache.lmdb)" in _link(TESTS, "test", "t_two", "disk_cache.lmdb")
+    assert P.link_library(EXE, "exe", "main", "d.l") == "(executable\n (name main)\n (libraries d.l))\n"
+
+
+def test_link_impl_tracks_and_restores_with_instrumentation(tmp_path, monkeypatch):
+    repo, g = _repo(tmp_path, monkeypatch)
+    x_dune = Path(repo, "src/x/dune"); x_dune.write_text(INLINE_FLAGS)
+    (Path(repo) / "src" / "v").mkdir(); (Path(repo) / "src" / "v" / "dune").write_text("(library (name v))\n")
+    (Path(repo) / "src" / "vi").mkdir(); (Path(repo) / "src" / "vi" / "dune").write_text("(library (name v_impl))\n")
+    _git(repo, "add", "."); _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "v")
+    g["libraries"].update({"v": {"dir": "src/v", "deps": [], "implements": None},
+                           "v_impl": {"dir": "src/vi", "deps": ["v"], "implements": "v", "public_name": "v.impl"},
+                           "v_other": {"dir": "src/vo", "deps": ["v"], "implements": "v"}})
+    g["libraries"]["x"].update({"has_inline_tests": True, "deps": ["v"]})
+    g.update({"public_names": {"v.impl": "v_impl"}, "tests": {}, "executables": {}})
+    P.start(repo, g, "x", "lib", ["x"])                       # instruments x's dune (same file we will link into)
+    s, info = P.link_impl(repo, g, "v_impl", "inline:x")
+    assert info["unit"] == "lib x" and not info["already_linked"] and s.linked[0].impl == "v_impl"
+    text = x_dune.read_text()
+    assert "backend landmarks" in text and "(libraries v.impl)" in text
+    s2, info2 = P.link_impl(repo, g, "v_impl", "inline:x")
+    assert info2["already_linked"] and len(s2.linked) == 1
+    rep = P.restore(repo)
+    assert rep.restored == ("src/x/dune",) and x_dune.read_text() == INLINE_FLAGS
+
+
+def test_link_impl_refuses_second_implementation(tmp_path, monkeypatch):
+    import pytest
+    repo, g = _repo(tmp_path, monkeypatch)
+    g["libraries"].update({"v": {"dir": "src/v", "deps": []}, "v_a": {"dir": "src/va", "deps": ["v"], "implements": "v"},
+                           "v_b": {"dir": "src/vb", "deps": ["v"], "implements": "v"}})
+    g["libraries"]["x"].update({"deps": ["v_a"], "has_inline_tests": True})
+    g.update({"public_names": {}, "tests": {}, "executables": {}})
+    P.start(repo, g, "x", "lib", ["x"])
+    with pytest.raises(RuntimeError, match="already links v_a"):
+        P.link_impl(repo, g, "v_b", "inline:x")
+    with pytest.raises(ValueError, match="does not implement"):
+        P.link_impl(repo, g, "x", "inline:x")
     P.restore(repo)

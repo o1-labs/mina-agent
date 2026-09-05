@@ -156,6 +156,16 @@ class ProfileEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class LinkedImpl:
+    """An implementation of a virtual library linked into a workload's unit
+    for the session (its dune file is tracked in Session.injected)."""
+    impl: str           # library key, e.g. disk_cache_lmdb
+    virtual: str        # the virtual library it implements
+    workload: str       # the workload spec whose link unit received it
+    dune: str           # the dune file edited
+
+
+@dataclass(frozen=True, slots=True)
 class Session:
     """An active profiling session, persisted as state/profile/session.json."""
     started: str
@@ -167,6 +177,7 @@ class Session:
     injected_sha: dict[str, str]        # dune path -> sha256 of the injected text
     skipped: tuple[tuple[str, str], ...] = ()
     profiles: tuple[ProfileEntry, ...] = ()
+    linked: tuple[LinkedImpl, ...] = ()
 
     @classmethod
     def from_json(cls, d: dict) -> "Session":
@@ -174,7 +185,8 @@ class Session:
                    libraries=tuple(d["libraries"]), dirs=tuple(d["dirs"]),
                    injected=dict(d["injected"]), injected_sha=dict(d.get("injected_sha", {})),
                    skipped=tuple((a, b) for a, b in d.get("skipped", [])),
-                   profiles=tuple(ProfileEntry(**p) for p in d.get("profiles", [])))
+                   profiles=tuple(ProfileEntry(**p) for p in d.get("profiles", [])),
+                   linked=tuple(LinkedImpl(**l) for l in d.get("linked", [])))
 
 
 @dataclass(frozen=True, slots=True)

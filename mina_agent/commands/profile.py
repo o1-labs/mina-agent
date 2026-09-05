@@ -12,12 +12,16 @@ focus libraries listed below are compiled with landmarks instrumentation
 (every top-level function is a probe), and every build the harness runs in
 this session keeps them instrumented. All discussion-session tools apply;
 in addition: profile_run, profile_top, profile_callers, profile_diff,
-profile_status, profile_add_library.
+profile_status, profile_add_library, profile_link_impl.
 
 Method: find the code that matters and make it small enough to read.
 
 1. Workload. Start with the cheapest candidate below that exercises the
-   focus. profile_run reports how many focus functions ran and their share
+   focus. A test runner links every dune virtual library's *default*
+   implementation (disk_cache -> identity, for one), not what the daemon
+   uses; when the measurement depends on the real backend,
+   profile_link_impl("<impl public name>") links it into the workload for
+   the session, then profile_run again. profile_run reports how many focus functions ran and their share
    of the time; if that is near zero, the workload does not reach the focus,
    pick another. Say which workload and its cost before running it.
 2. Rank. profile_top by self_ms, then by self_alloc_mb: time and allocation

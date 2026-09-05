@@ -25,7 +25,7 @@ import subprocess
 
 from . import landmarks, paths
 from .graph import write_json_atomic
-from .model import ProfileEntry, RestoreReport, Session, Workload, WorkloadCandidate, to_json
+from .model import LinkedImpl, ProfileEntry, RestoreReport, Session, Workload, WorkloadCandidate, to_json
 
 DUNE_SUBCOMMANDS = ("build", "exec", "runtest", "test")
 
@@ -107,12 +107,168 @@ def _forms(text):
 
 def library_span(text, name):
     """Span of the (library ...) form declaring (name <name>), or None."""
-    pat = re.compile(r"\(\s*name\s+" + re.escape(name) + r"\s*\)")
+    return unit_span(text, "lib", name)
+
+
+STANZA_HEADS = {"lib": ("library",), "test": ("test", "tests"), "exe": ("executable", "executables")}
+
+
+def unit_span(text, kind, name):
+    """Span of the stanza of `kind` declaring `name`: (name X) or a member of
+    (names ...). None when absent."""
+    single = re.compile(r"\(\s*name\s+" + re.escape(name) + r"\s*\)")
+    multi = re.compile(r"\(\s*names\b([^)]*)\)")
     for s, e in _forms(text):
         form = text[s:e]
-        if re.match(r"\(\s*library\b", form) and pat.search(form):
+        head = re.match(r"\(\s*([a-z_]+)\b", form)
+        if not head or head.group(1) not in STANZA_HEADS[kind]:
+            continue
+        m = multi.search(form)
+        if single.search(form) or (m and name in m.group(1).split()):
             return s, e
     return None
+
+
+def _fields(text, span):
+    """(field name, (start, end)) of every sub-form directly inside a form."""
+    s, e = span
+    inner_start = s + 1
+    out = []
+    for fs, fe in _forms(text[inner_start:e - 1]):
+        a, b = inner_start + fs, inner_start + fe
+        head = re.match(r"\(\s*([a-z_]+)\b", text[a:b])
+        out.append((head.group(1) if head else "", (a, b)))
+    return out
+
+
+def _field(text, span, name):
+    return next((sp for n, sp in _fields(text, span) if n == name), None)
+
+
+def _indent_of(text, pos):
+    """Whitespace between the start of pos's line and pos."""
+    nl = text.rfind("\n", 0, pos)
+    return text[nl + 1:pos] if text[nl + 1:pos].strip() == "" else ""
+
+
+def _append_to_libraries(text, span, lib):
+    """text with `lib` added to the (libraries ...) field of the form at span,
+    creating the field when absent; unchanged when already listed. New lines
+    follow the indentation of the form's existing fields."""
+    libs = _field(text, span, "libraries")
+    if libs:
+        a, b = libs
+        if lib in re.findall(r"[^\s()]+", text[a:b])[1:]:
+            return text
+        indent = _indent_of(text, a) + " "
+        return text[:b - 1].rstrip() + f"\n{indent}{lib}" + text[b - 1:]
+    s, e = span
+    fields = _fields(text, span)
+    indent = _indent_of(text, fields[0][1][0]) if fields else _indent_of(text, s) + " "
+    return text[:e - 1].rstrip() + f"\n{indent}(libraries {lib})" + text[e - 1:]
+
+
+def link_library(text, kind, name, lib):
+    """text with `lib` linked into the unit `name` of `kind`: for a library,
+    into its (inline_tests (libraries ...)) so the inline-test runner links
+    it; for a test or executable, into its (libraries ...). None when the
+    stanza (or, for a library, its inline_tests field) is not found."""
+    span = unit_span(text, kind, name)
+    if span is None:
+        return None
+    if kind == "lib":
+        it = _field(text, span, "inline_tests")
+        if it is None:
+            return None
+        return _append_to_libraries(text, it, lib)
+    return _append_to_libraries(text, span, lib)
+
+
+def _modify_dune(repo, s: Session, dune: str, transform) -> Session:
+    """Apply `transform(text) -> text | None` to a dune file the session may
+    already have edited, keeping the record restore() needs: the original
+    bytes are kept from the first edit, injected_sha follows the latest.
+    A file edited outside the session (sha mismatch) or dirty before its
+    first edit is refused."""
+    full = os.path.join(repo, dune)
+    with open(full, encoding="utf-8") as fh:
+        current = fh.read()
+    if dune in s.injected:
+        if _sha(current) != s.injected_sha.get(dune):
+            raise RuntimeError(f"{dune} was edited outside the session since it was instrumented; not touching it")
+    elif _git_dirty(repo, dune):
+        raise RuntimeError(f"{dune} has uncommitted changes; commit or stash them first")
+    new = transform(current)
+    if new is None:
+        raise RuntimeError(f"could not find the stanza to edit in {dune}")
+    if new == current:
+        return s
+    with open(full, "w", encoding="utf-8") as fh:
+        fh.write(new)
+    injected = s.injected if dune in s.injected else {**s.injected, dune: base64.b64encode(current.encode()).decode()}
+    return dataclasses.replace(s, injected=injected, injected_sha={**s.injected_sha, dune: _sha(new)})
+
+
+def _closure(g, roots):
+    """Local libraries reachable from roots through deps (roots included when libraries)."""
+    seen, stack = set(), list(roots)
+    while stack:
+        k = stack.pop()
+        if k in seen or k not in g["libraries"]:
+            continue
+        seen.add(k)
+        stack.extend(g["libraries"][k]["deps"])
+    return seen
+
+
+def link_unit(g, workload: str):
+    """The stanza a workload links through: (kind, name, dir, root deps)."""
+    w = resolve_workload(g, {}, workload)[0] if workload.startswith(("inline:", "test:", "exe:")) else None
+    if workload.startswith("inline:"):
+        lib = workload[7:]
+        return "lib", lib, g["libraries"][lib]["dir"], [lib]
+    if workload.startswith("test:"):
+        rec = g["tests"][workload[5:]]
+        return "test", rec["name"], rec["dir"], rec["deps"]
+    if workload.startswith("exe:"):
+        assert w is not None
+        key = f"{os.path.dirname(w.exe)}/{os.path.basename(w.exe).removesuffix('.exe')}"
+        rec = g["executables"].get(key)
+        if rec is None:
+            raise ValueError(f"{workload} is not an executable the graph describes; use test:<dir>/<name> or inline:<lib>")
+        return "exe", rec["name"], rec["dir"], rec["deps"]
+    raise ValueError(f"{workload!r}: give inline:<lib>, test:<dir>/<name> or exe:<path.exe> to link into")
+
+
+def link_impl(repo, g, impl: str, workload: str) -> tuple[Session, dict]:
+    """Link implementation `impl` (a library key) of a virtual library into
+    the workload's link unit for the rest of the session."""
+    s = load(repo)
+    if s is None:
+        raise RuntimeError("no active profiling session; start one with mina-agent profile --focus <library>")
+    rec = g["libraries"].get(impl)
+    if rec is None:
+        raise ValueError(f"unknown library {impl!r}")
+    virtual = rec.get("implements")
+    if not virtual:
+        raise ValueError(f"{impl} does not implement a virtual library (no `implements` in its stanza)")
+    kind, name, d, roots = link_unit(g, workload)
+    others = sorted(k for k in _closure(g, roots) if g["libraries"][k].get("implements") == virtual and k != impl)
+    if others:
+        raise RuntimeError(f"{workload} already links {', '.join(others)} for {virtual}; dune refuses two "
+                           f"implementations of one virtual library, so {impl} cannot be added")
+    dune = os.path.join(d, "dune")
+    public = rec.get("public_name") or impl
+    s2 = _modify_dune(repo, s, dune, lambda t: link_library(t, kind, name, public))
+    already = s2 is s
+    entry = LinkedImpl(impl=impl, virtual=virtual, workload=workload, dune=dune)
+    if entry not in s2.linked:
+        s2 = dataclasses.replace(s2, linked=(*s2.linked, entry))
+    save(repo, s2)
+    return s2, {"impl": impl, "public_name": public, "virtual": virtual, "workload": workload, "unit": f"{kind} {name}",
+                "dune": dune, "already_linked": already,
+                "note": "the next profile_run / test / test_one relinks the workload with it; profiles recorded "
+                        "before this call used the previous implementation"}
 
 
 def inject_stanza(text, name):
@@ -284,6 +440,8 @@ def resume(repo, g) -> Session:
     kept = tuple(e for e in prev.profiles if os.path.exists(e.path))
     s = dataclasses.replace(s, profiles=kept)
     save(repo, s)
+    for l in prev.linked:                  # re-link the implementations the session had chosen
+        s, _ = link_impl(repo, g, l.impl, l.workload)
     return s
 
 

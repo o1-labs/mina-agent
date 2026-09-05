@@ -701,12 +701,32 @@ def profile_add_library(library: str) -> dict:
                     "profiles recorded before this call do not cover it"}
 
 
+def profile_link_impl(impl: str, workload: str = "") -> dict:
+    """Link a chosen implementation of a dune virtual library into a
+    workload's link unit for the rest of the session, e.g.
+    profile_link_impl("disk_cache.lmdb"): without it every test runner
+    silently gets the virtual library's default implementation, so a
+    measurement never exercises the production backend. impl is a library
+    (dune or public name) carrying `implements`; workload defaults to
+    inline:<focus>. Refuses if the unit already links another
+    implementation of that virtual library. The dune edit is tracked and
+    restored with the session; the next profile_run relinks."""
+    from . import profile as P
+    g = GRAPH.get()
+    s = _session()
+    key = g["public_names"].get(impl, impl)
+    workload = workload or f"inline:{s.focus}"
+    _, info = P.link_impl(ENV.repo, g, key, workload)
+    return info
+
+
 def profile_status() -> dict:
     """The active profiling session: focus, instrumented libraries, profiles
     recorded so far. Errors when no session is active."""
     s = _session()
     d = {k: v for k, v in to_json(s).items() if k not in ("injected", "injected_sha")}  # original bytes are not for the model
-    return d | {"injected_dune_files": sorted(s.injected)}
+    return d | {"injected_dune_files": sorted(s.injected),
+                "linked_implementations": [f"{l.impl} ({l.virtual}) into {l.workload}" for l in s.linked]}
 
 
 def profile_run(workload: str, only_test: str = "", timeout_s: int = 900) -> dict:
@@ -875,6 +895,7 @@ TOOLS = ["env_status", "build", "check", "check_dependents", "test", "test_one",
          "tests_for", "deps_of", "dependents_of", "library_of", "find_module", "usages",
          "type_at", "definition", "errors",
          "profile_status", "profile_run", "profile_top", "profile_callers", "profile_diff", "profile_add_library",
+         "profile_link_impl",
          "bug_report_bundle", "bug_report_file", "perf_measure", "perf_compare"]
 
 

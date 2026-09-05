@@ -680,6 +680,27 @@ def _profile_entry(s: Session, profile: str) -> ProfileEntry:
     raise ValueError(f"unknown profile {profile!r}; recorded: " + ", ".join(p.profile for p in s.profiles))
 
 
+def profile_add_library(library: str) -> dict:
+    """Extend the active profiling session's instrumentation to another
+    library (a dune name, public name, or a source path inside it), so the
+    next profile_run attributes time and allocation inside it too. Use it
+    when the hot path crosses out of the instrumented set: windows placed
+    in an uninstrumented library are inert. The library's dune file gets the
+    same temporary stanza as the focus and is restored with it at session
+    end; refuses if that file has uncommitted changes."""
+    from . import profile as P
+    g = GRAPH.get()
+    lib = P.resolve_focus(g, library)
+    before = _session()
+    s = P.extend(ENV.repo, g, [lib])
+    added = [l for l in s.libraries if l not in before.libraries]
+    return {"library": lib, "added": added, "already_instrumented": not added,
+            "instrumented_libraries": list(s.libraries), "injected_dune_files": sorted(s.injected),
+            "skipped": [list(x) for x in s.skipped],
+            "note": "rebuild happens on the next profile_run (dune recompiles the library instrumented); "
+                    "profiles recorded before this call do not cover it"}
+
+
 def profile_status() -> dict:
     """The active profiling session: focus, instrumented libraries, profiles
     recorded so far. Errors when no session is active."""
@@ -853,7 +874,7 @@ def bug_report_file(title: str, body: str, bundle: str = "") -> dict:
 TOOLS = ["env_status", "build", "check", "check_dependents", "test", "test_one",
          "tests_for", "deps_of", "dependents_of", "library_of", "find_module", "usages",
          "type_at", "definition", "errors",
-         "profile_status", "profile_run", "profile_top", "profile_callers", "profile_diff",
+         "profile_status", "profile_run", "profile_top", "profile_callers", "profile_diff", "profile_add_library",
          "bug_report_bundle", "bug_report_file", "perf_measure", "perf_compare"]
 
 

@@ -18,7 +18,9 @@ it under the profiler; reports the focus's share of the time and its top
 functions), profile_top (rank by self_ms, total_ms, calls, self_alloc_mb,
 alloc_mb; self excludes callees), profile_callers (who calls a function and
 what it calls, with time under each edge), profile_diff (per-function change
-between two profiles of the same workload), plus the usual build, check,
+between two profiles of the same workload), profile_add_library (put another
+library under instrumentation when the hot path crosses into it; windows
+outside the instrumented set are inert), plus the usual build, check,
 errors, usages, find_module, type_at, definition, and file reads.
 
 You have about 40 tool calls in total. Spend them like this:
@@ -30,8 +32,10 @@ You have about 40 tool calls in total. Spend them like this:
 2. profile_top by self_ms and by self_alloc_mb. Time and allocation are
    different questions. Use profile_callers once on the top function to see
    what makes it hot.
-3. If the hottest focus function is longer than about 60 lines, add finer
-   windows with Edit: wrap the sub-expressions you suspect as
+3. If the hottest focus function's cost is a call into another library,
+   profile_add_library that library and profile_run the same workload
+   again before anything else. If the hottest function is longer than
+   about 60 lines, add finer windows with Edit: wrap the sub-expressions you suspect as
    `expr [@landmark "name"]` (or `let[@landmark] f = ...` for local
    bindings), keeping the code otherwise identical, then profile_run the
    same workload again and profile_top. One round of windows; the harness

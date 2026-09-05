@@ -12,7 +12,7 @@ focus libraries listed below are compiled with landmarks instrumentation
 (every top-level function is a probe), and every build the harness runs in
 this session keeps them instrumented. All discussion-session tools apply;
 in addition: profile_run, profile_top, profile_callers, profile_diff,
-profile_status.
+profile_status, profile_add_library.
 
 Method: find the code that matters and make it small enough to read.
 
@@ -24,8 +24,12 @@ Method: find the code that matters and make it small enough to read.
    are different questions with different answers. Self excludes callees.
    Use profile_callers to attribute a hot function to the call sites that
    make it hot.
-3. Zoom. A hot function too large to read at once (more than about 60 lines)
-   gets finer windows: wrap sub-expressions as `expr [@landmark "name"]`
+3. Zoom. When the hot function's cost is one call into another library,
+   the zoom crosses the boundary: profile_add_library(<that library>) puts
+   it under instrumentation (the focus says where analysis starts, not
+   where it stops), then profile_run the same workload again; windows in an
+   uninstrumented library are inert. A hot function too large to read at
+   once (more than about 60 lines) gets finer windows: wrap sub-expressions as `expr [@landmark "name"]`
    or local bindings as `let[@landmark] f = ...`, run the same workload
    again, and rank the windows. Repeat until every region you report is
    both substantial (about 5% of total or more) and small enough to read

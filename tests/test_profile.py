@@ -129,3 +129,18 @@ def test_landmarks_load_aggregates_instances(tmp_path):
     assert [r["name"] for r in landmarks.top(p, "self_ms", 1)] == ["f"]
     d = landmarks.diff(p, p)
     assert d["total_ms_delta"] == 0.0 and all(r["status"] == "changed" for r in d["functions"])
+
+
+def test_extend_adds_a_library_and_restore_covers_it(tmp_path, monkeypatch):
+    repo, g = _repo(tmp_path, monkeypatch)
+    (Path(repo) / "src" / "y").mkdir()
+    (Path(repo) / "src" / "y" / "dune").write_text("(library\n (name y))\n")
+    _git(repo, "add", "."); _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "y")
+    g["libraries"]["y"] = {"dir": "src/y", "deps": []}
+    P.start(repo, g, "x", "lib", ["x"])
+    s = P.extend(repo, g, ["y"])
+    assert s.libraries == ("x", "y") and s.dirs == ("src/x", "src/y") and s.scope == "custom"
+    assert set(s.injected) == {"src/x/dune", "src/y/dune"} and "landmarks" in Path(repo, "src/y/dune").read_text()
+    assert P.extend(repo, g, ["y"]).libraries == ("x", "y")          # idempotent
+    rep = P.restore(repo)
+    assert set(rep.restored) == {"src/x/dune", "src/y/dune"} and "landmarks" not in Path(repo, "src/y/dune").read_text()

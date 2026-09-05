@@ -196,13 +196,11 @@ def scope_libraries(g, focus, scope):
     return libs
 
 
-def start(repo, g, focus, scope, libs) -> Session:
-    """Inject stanzas for libs and record the session. Refuses if one is
-    already active or any target dune file is dirty."""
-    if active(repo):
-        raise RuntimeError("a profiling session is already active; end it with mina-agent profile --restore")
-    if not landmarks.present(repo):
-        raise RuntimeError("landmarks is not vendored; run mina-agent admin setup")
+def _instrument(repo, g, libs):
+    """Inject the landmarks stanza into each library's dune file. Plans every
+    edit before writing any, so a dirty file refuses the whole batch.
+    Returns (injected: dune path -> base64 original, injected_sha: dune path
+    -> sha of the written text, skipped: (lib, reason))."""
     plan, skipped = {}, []
     for lib in libs:
         rec = g["libraries"][lib]
@@ -225,12 +223,43 @@ def start(repo, g, focus, scope, libs) -> Session:
     for dune, (text, new) in plan.items():
         with open(os.path.join(repo, dune), "w", encoding="utf-8") as fh:
             fh.write(new)
+    return ({dune: base64.b64encode(text.encode()).decode() for dune, (text, _) in plan.items()},
+            {dune: _sha(new) for dune, (_, new) in plan.items()}, skipped)
+
+
+def start(repo, g, focus, scope, libs) -> Session:
+    """Inject stanzas for libs and record the session. Refuses if one is
+    already active or any target dune file is dirty."""
+    if active(repo):
+        raise RuntimeError("a profiling session is already active; end it with mina-agent profile --restore")
+    if not landmarks.present(repo):
+        raise RuntimeError("landmarks is not vendored; run mina-agent admin setup")
+    injected, injected_sha, skipped = _instrument(repo, g, libs)
     s = Session(started=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
                 focus=focus, scope=scope, libraries=tuple(libs),
                 dirs=tuple(g["libraries"][l]["dir"] for l in libs),
-                injected={dune: base64.b64encode(text.encode()).decode() for dune, (text, _) in plan.items()},
-                injected_sha={dune: _sha(new) for dune, (_, new) in plan.items()},
-                skipped=tuple(skipped))
+                injected=injected, injected_sha=injected_sha, skipped=tuple(skipped))
+    save(repo, s)
+    return s
+
+
+def extend(repo, g, libs) -> Session:
+    """Add libraries to the active session's instrumented set: inject their
+    stanzas, record them so restore() covers them, widen `dirs` so the focus
+    scope of profile_run/profile_top includes them. The focus itself is
+    unchanged; scope becomes "custom"."""
+    s = load(repo)
+    if s is None:
+        raise RuntimeError("no active profiling session; start one with mina-agent profile --focus <library>")
+    new_libs = [l for l in libs if l not in s.libraries]
+    if not new_libs:
+        return s
+    injected, injected_sha, skipped = _instrument(repo, g, new_libs)
+    s = dataclasses.replace(
+        s, scope="custom", libraries=(*s.libraries, *new_libs),
+        dirs=(*s.dirs, *(g["libraries"][l]["dir"] for l in new_libs)),
+        injected={**s.injected, **injected}, injected_sha={**s.injected_sha, **injected_sha},
+        skipped=(*s.skipped, *skipped))
     save(repo, s)
     return s
 

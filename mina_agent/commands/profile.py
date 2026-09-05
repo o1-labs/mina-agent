@@ -55,6 +55,32 @@ is the whole run.
 """
 
 
+def _continue(e):
+    """profile --continue: the archived session's libraries and profiles come
+    back under instrumentation, then the last profile conversation resumes."""
+    from .. import graph, profile as P
+    if P.active(e.repo):
+        typer.echo("a profiling session is already active; run mina-agent profile --restore first", err=True)
+        raise typer.Exit(2)
+    resume = agent.resume_id("profile")
+    g = graph.load_or_derive(e)
+    try:
+        s = P.resume(e.repo, g)
+    except RuntimeError as ex:
+        typer.echo(str(ex), err=True)
+        raise typer.Exit(2)
+    typer.echo(f"resumed profiling session on {s.focus}: {len(s.injected)} dune file(s) instrumented, "
+               f"{len(s.profiles)} profile(s) carried over; continuing conversation {resume}", err=True)
+    try:
+        rc = agent.run_interactive("", e, "profile", resume=resume)
+    finally:
+        rep = P.restore(e.repo)
+        typer.echo(f"session ended; restored {len(rep.restored)} dune file(s), "
+                   f"{len(rep.profiles)} profile(s) kept in {P.state_dir()}", err=True)
+        _report(rep, lambda m: typer.echo(m, err=True))
+    typer.echo(f"session ended (exit {rc})", err=True)
+
+
 def _report(rep: RestoreReport, out):
     """The restore report, one line per file that needs a human decision."""
     for f in rep.already_restored:
@@ -106,7 +132,9 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
             headless: bool = typer.Option(False, "--headless", help="Run the profile_hunt phase instead of the TUI: "
                                                                     "same session and walls, driven by the SDK, no prompts."),
             max_turns: Optional[int] = typer.Option(None, "--max-turns", help="Override the phase's turn budget (implies --headless)."),
-            trace: bool = typer.Option(False, "--trace", help="Print and save the trajectory evidence (implies --headless).")):
+            trace: bool = typer.Option(False, "--trace", help="Print and save the trajectory evidence (implies --headless)."),
+            continue_: bool = typer.Option(False, "--continue", "-c", help="Resume the last profile session: re-instrument "
+                                                                          "the same libraries, keep its profiles, continue the conversation.")):
     """Start a profiling session on a library, interactive or headless.
 
     The focus libraries get a temporary landmarks stanza in their dune files
@@ -125,6 +153,8 @@ def profile(focus: Optional[str] = typer.Option(None, "--focus", "-f",
         return
     if not e.usable:
         raise envmod.NoToolchain(e)
+    if continue_:
+        return _continue(e)
     if not focus:
         typer.echo("--focus is required (a library name or a path inside one)", err=True)
         raise typer.Exit(2)

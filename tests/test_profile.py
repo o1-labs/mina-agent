@@ -144,3 +144,20 @@ def test_extend_adds_a_library_and_restore_covers_it(tmp_path, monkeypatch):
     assert P.extend(repo, g, ["y"]).libraries == ("x", "y")          # idempotent
     rep = P.restore(repo)
     assert set(rep.restored) == {"src/x/dune", "src/y/dune"} and "landmarks" not in Path(repo, "src/y/dune").read_text()
+
+
+def test_restore_archives_and_resume_recreates_with_profiles(tmp_path, monkeypatch):
+    from mina_agent.model import ProfileEntry
+    repo, g = _repo(tmp_path, monkeypatch)
+    P.start(repo, g, "x", "lib", ["x"])
+    prof = P.state_dir() / "001-inline_x.json"; prof.write_text("{}")
+    entry = ProfileEntry(profile="001-inline_x", path=str(prof), workload="inline:x", only_test=None, exe="e",
+                         exit_code=0, run_s=1.0, build_s=1.0, total_ms=1.0, units="ms", functions=1,
+                         focus_functions_hit=1, focus_self_share_pct=1.0)
+    P.record_profile(repo, entry)
+    P.restore(repo)
+    assert not P.active(repo) and P.last_session_file(repo).exists()
+    s = P.resume(repo, g)
+    assert P.active(repo) and s.libraries == ("x",) and s.profiles == (entry,)
+    assert "landmarks" in Path(repo, "src/x/dune").read_text()
+    P.restore(repo)

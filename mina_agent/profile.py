@@ -40,6 +40,12 @@ def session_file(repo):
     return state_dir() / "session.json"
 
 
+def last_session_file(repo):
+    """Where restore() archives the session it ended, so `profile --continue`
+    can re-create it: same libraries, same recorded profiles."""
+    return state_dir() / "last-session.json"
+
+
 def load(repo) -> Session | None:
     p = session_file(repo)
     if not p.exists():
@@ -264,6 +270,23 @@ def extend(repo, g, libs) -> Session:
     return s
 
 
+def resume(repo, g) -> Session:
+    """Re-create the last ended session: instrument the same libraries again
+    and carry its recorded profiles forward (their files are still under
+    state/profile), so profile_top / profile_diff keep working across the
+    break. Refuses if a session is active or nothing was archived."""
+    p = last_session_file(repo)
+    if not p.exists():
+        raise RuntimeError("no previous profiling session to continue")
+    prev = Session.from_json(json.loads(p.read_text()))
+    libs = [l for l in prev.libraries if l in g["libraries"]]
+    s = start(repo, g, prev.focus, prev.scope, libs)
+    kept = tuple(e for e in prev.profiles if os.path.exists(e.path))
+    s = dataclasses.replace(s, profiles=kept)
+    save(repo, s)
+    return s
+
+
 def restore(repo) -> RestoreReport:
     """Put every injected dune file back and end the session. Never touches
     .ml/.mli files, and never overwrites a dune file that was edited after
@@ -295,6 +318,7 @@ def restore(repo) -> RestoreReport:
                                             capture_output=True, text=True).stdout.splitlines()
                     if l[3:].endswith((".ml", ".mli"))})
     windows_left = [f for f in edits if "[@landmark" in open(os.path.join(repo, f), encoding="utf-8").read()]
+    write_json_atomic(last_session_file(repo), to_json(s))
     session_file(repo).unlink()
     return RestoreReport(restored=tuple(restored), already_restored=tuple(already), edited=tuple(edited),
                          stanza_left=tuple(stanza_left), still_dirty=tuple(still_dirty),

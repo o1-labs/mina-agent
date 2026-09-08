@@ -68,6 +68,16 @@ does not say), then measures base and head with no instrumentation:
 bytes allocated, and samply for the share of samples under a named
 function. It reports whether the claimed numbers roughly recover.
 
+Checking o1js against a Mina revision: `mina-agent run o1js-compat --mina
+<branch-or-commit> --base <o1js-branch>` opens a draft PR in o1js whose only
+change is the `src/mina` submodule pointer, which is what o1js CI builds
+against; proof-systems comes along nested inside it. The revision has to be
+on MinaProtocol/mina, since that is the submodule's URL and all CI can
+fetch. It works in a throwaway worktree of `$O1JS_REPO` and writes the
+gitlink directly, so the submodule is never cloned locally. The PR is a
+probe: titled as such, opened as a draft, never merged, and the phase stops
+once CI has been triggered.
+
 Writing code: `mina-agent develop` is discuss's opposite. Edits are accepted
 without asking, tests may be run, and the shell is an allowlist enforced by
 a hook (git, gh, `mina-agent lint/list/status/doctor`, read-only utilities;

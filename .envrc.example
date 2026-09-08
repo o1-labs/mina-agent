@@ -1,4 +1,6 @@
-# Optional secrets for harness sessions. Copy to harness/.envrc (gitignored);
-# mina-agent sources it for every session it starts. Not needed when the
-# tools are already authenticated on this machine (`gh auth login`).
+# Optional per-machine settings for harness sessions. Copy to harness/.envrc
+# (gitignored); mina-agent sources it for every session it starts. A phase
+# that needs one of these declares it with `env:` and refuses to start
+# without it.
 export GH_TOKEN=ghp_...      # only where gh cannot use a keyring login (CI, a fresh box)
+export O1JS_REPO=~/code/o1js # o1js checkout; o1js-compat worktrees off it

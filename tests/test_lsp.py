@@ -22,19 +22,26 @@ def test_nix_shell_ocamllsp_is_labelled_as_such(monkeypatch):
     assert lsp.resolve(_env(Mode.OPAM)) == ("/nix/store/abc/bin/ocamllsp", "PATH (project switch)")
 
 
-def test_nix_miss_points_at_the_devshell_not_opam(monkeypatch):
-    """The opam advice is wrong in a nix shell: there is no switch to install into."""
+def test_a_miss_says_what_is_lost_and_nothing_about_installing(monkeypatch):
+    """Same answer in both modes: the harness cannot guess how you would get
+    ocamllsp, so it names the cost and the two places it looks."""
     _no_ocamllsp(monkeypatch)
-    path, why = lsp.resolve(_env(Mode.NIX))
-    assert path is None
-    assert "devShell" in why and "nix develop" in why
-    assert "opam" not in why
+    for mode in (Mode.NIX, Mode.OPAM):
+        path, why = lsp.resolve(_env(mode))
+        assert path is None
+        assert "no ocamllsp on PATH" in why and "MINA_AGENT_OCAMLLSP" in why
+        assert "install" not in why.replace("MINA_AGENT_OCAMLLSP", "")
+        assert "opam" not in why and "nix develop" not in why
 
 
-def test_opam_miss_keeps_the_switch_advice(monkeypatch):
-    _no_ocamllsp(monkeypatch)
-    path, why = lsp.resolve(_env(Mode.OPAM))
-    assert path is None and "opam install ocaml-lsp-server" in why
+def test_resolution_never_probes_an_opam_switch(monkeypatch):
+    """The mina-lsp sibling switch is gone: PATH or the override, nothing else."""
+    calls = []
+    monkeypatch.setattr(lsp.shutil, "which", lambda name, path=None: calls.append(name) or None)
+    monkeypatch.delenv("MINA_AGENT_OCAMLLSP", raising=False)
+    lsp.resolve(_env(Mode.OPAM))
+    assert calls == ["ocamllsp"]
+    assert not hasattr(lsp, "LSP_SWITCH")
 
 
 def test_explicit_override_wins_in_either_mode(monkeypatch, tmp_path):

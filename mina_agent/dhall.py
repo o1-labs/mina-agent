@@ -65,8 +65,7 @@ def platform_for_release():
     if sysname == "Darwin":
         if arch == "x86_64" or rosetta_available():
             return "x86_64-macos", None
-        return None, ("Apple Silicon without Rosetta; the pinned dhall is x86_64-only. "
-                      "Install Rosetta: softwareupdate --install-rosetta --agree-to-license")
+        return None, "Apple Silicon without Rosetta; the pinned dhall is x86_64-only"
     return None, f"no pinned dhall build for {sysname}/{arch}"
 
 
@@ -117,7 +116,7 @@ def status(repo):
     if have == v:
         # buildkite/Makefile hardcodes gsed on Darwin; without it every check_* target fails
         if sys.platform == "darwin" and not shutil.which("gsed"):
-            return None, f"{dest} ({v}) present but gsed missing (brew install gnu-sed); Lint/Dhall skipped locally"
+            return None, f"{dest} ({v}) present but GNU sed is not on PATH as gsed; Lint/Dhall skipped locally"
         return True, f"{dest} ({v}, matches CI)"
     on_path = shutil.which("dhall")
     pv = version_of(on_path) if on_path else None

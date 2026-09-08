@@ -10,9 +10,10 @@ inherits that environment as is.
     mina-agent status               # mode nix (activated)
 
 `with-lsp` is the shell to use: it is the dev shell plus
-`ocaml-lsp-server`, which the harness needs for `check`, `type_at`,
-`definition`, and `usages`. The plain `default` shell works for everything
-else, but `doctor` will report ocamllsp missing.
+`ocaml-lsp-server`. The plain `default` shell builds and type-checks
+everything, but `doctor` fails on the missing ocamllsp and sessions run
+without Claude Code's LSP tool, falling back to merlin for `type_at` and
+`definition`.
 
 `uv` is a machine prerequisite in both modes and the flake does not provide
 it: `nix profile install nixpkgs#uv`.
@@ -44,9 +45,11 @@ Three places, and nothing else:
   the layout under `state/landmarks` are unchanged.
 
 - **LSP resolution.** The devShell already puts `ocamllsp` on PATH, so
-  `lsp.resolve` finds it at step 2 and labels it `PATH (nix shell)`. The
-  opam fallbacks (a sibling `mina-lsp` switch, the `opam install` advice)
-  are opam-only; in nix mode a miss says to re-enter the devShell.
+  `lsp.resolve` finds it there and labels it `PATH (nix shell)` rather than
+  `PATH (project switch)`. That label is now the only thing about ocamllsp
+  that differs between the modes: resolution is the override or PATH in
+  both, and a miss fails loudly in both, since the harness neither installs
+  ocamllsp nor assumes how you would.
 
 - **`doctor`'s opam.export check.** There is no project switch to compare
   against, and the flake builds its own package set from `opam.export`, so

@@ -65,11 +65,16 @@ def lsp(e):
         return
     from .. import lsp as L
     p, source = L.resolve(e)
-    yield Check("ocamllsp", OK if p else NOTE, f"{p} ({source})" if p else source)
+    # A miss fails rather than notes: the harness will not install ocamllsp and
+    # cannot guess how you would, so the one thing it can do is be loud.
+    yield Check("ocamllsp", OK if p else FAIL, f"{p} ({source})" if p else source)
+    gen = L.plugin_dir(e.repo) if L.has_lsp(e.repo) else None
     if p:
-        gen = L.plugin_dir(e.repo) if L.has_lsp(e.repo) else None
         yield Check("lsp plugin", OK if gen else FAIL,
                     f"{gen} (passed to sessions with --plugin-dir)" if gen else "not generated; run mina-agent admin init")
+    else:
+        yield Check("lsp plugin", FAIL, "no LSP server entry; sessions run without the LSP tool"
+                    + (f" (stale entry in {gen}; rerun mina-agent admin init)" if gen else ""))
 
 
 def opam_export(e):

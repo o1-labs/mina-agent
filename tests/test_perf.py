@@ -84,3 +84,48 @@ def test_sample_shares_weights_cpu_and_skips_rust_threads(tmp_path):
     assert sh.leaf_pct == 75.0 and sh.completeness_pct == 100.0 and round(sh.ocaml_cpu_share_pct, 1) == 3.8
     everything = perf.sample_shares(str(p), str(s), "X__f", scope="all")
     assert everything.total == 1040 and everything.ocaml_threads == 2
+
+
+# ---- samply availability ---------------------------------------------------
+
+def test_samply_missing_is_reported_as_missing(monkeypatch):
+    monkeypatch.setattr(perf.shutil, "which", lambda name: None)
+    found, why = perf.samply_status()
+    assert found is None and "cargo install samply" in why
+
+
+def test_samply_is_unusable_when_the_kernel_forbids_sampling(monkeypatch):
+    """Installed but gated: reported as missing, because it would otherwise
+    record nothing and the caller would read that as "no samples"."""
+    monkeypatch.setattr(perf.shutil, "which", lambda name: "/usr/bin/samply")
+    monkeypatch.setattr(perf, "perf_event_paranoid", lambda: 4)
+    found, why = perf.samply_status()
+    assert found is None
+    assert "perf_event_paranoid is 4" in why and "sysctl kernel.perf_event_paranoid=1" in why
+    assert perf.tools_available()["samply"] is None
+
+
+def test_samply_is_usable_at_or_below_the_threshold(monkeypatch):
+    monkeypatch.setattr(perf.shutil, "which", lambda name: "/usr/bin/samply")
+    for lvl in (perf.PARANOID_MAX, -1, None):     # None: macOS, no such knob
+        monkeypatch.setattr(perf, "perf_event_paranoid", lambda lvl=lvl: lvl)
+        assert perf.samply_status() == ("/usr/bin/samply", "/usr/bin/samply")
+
+
+def test_perf_event_paranoid_reads_the_knob(tmp_path):
+    knob = tmp_path / "perf_event_paranoid"
+    knob.write_text("2\n")
+    assert perf.perf_event_paranoid(str(knob)) == 2
+    assert perf.perf_event_paranoid(str(tmp_path / "absent")) is None      # macOS
+    knob.write_text("not a number\n")
+    assert perf.perf_event_paranoid(str(knob)) is None
+
+
+class _Ran:
+    def __init__(self, stderr="", stdout="", returncode=1):
+        self.stderr, self.stdout, self.returncode = stderr, stdout, returncode
+
+
+def test_a_silent_samply_failure_still_says_something():
+    assert "exit 1" in perf._samply_failed(_Ran())
+    assert "permission denied" in perf._samply_failed(_Ran(stderr="oh no\npermission denied\n"))

@@ -7,6 +7,7 @@ max_turns: 40
 max_budget_usd: 15
 args: pr
 needs: gh
+optional: samply
 mode: interactive
 ---
 Verify the performance claims of pull request `{{pr}}` by reproducing them
@@ -56,10 +57,14 @@ It is slow; call it once with the right workload, not repeatedly.
 3. Judge. For each claim, put the measured base, head and change beside
    the claimed before, after and change. Time claims are compared on
    median wall clock, or on sample share when a symbol was named (the share
-   is CPU-weighted over the OCaml threads; if `symbol_share_pct` is None the
-   stacks were incomplete: say so and use `symbol_leaf_share_pct` of the
-   functions the change touches, or report the time claim unresolvable on
-   this machine);
+   is CPU-weighted over the OCaml threads). Two different things make a
+   share None, and they are not interchangeable: if `symbol_share_pct` is
+   None but `symbol_leaf_share_pct` is a number, the stacks were incomplete
+   — say so and judge on the leaf share of the functions the change touches.
+   If both are None, samply did not run at all; `warnings` says why. Then
+   there is no sample evidence on this machine: report the time claim
+   unresolvable and say what would be needed, rather than falling back to
+   wall clock as though it answered the same question;
    allocation claims on bytes allocated (the GC's exact count, so a claimed
    "N GB saved" should match closely); memory claims on peak RSS.
    "Recovered" means the direction matches and the magnitude is within a

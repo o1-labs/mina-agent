@@ -13,6 +13,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -144,10 +145,45 @@ def _time_cmd() -> list[str]:
     return ["/usr/bin/time", "-l"] if platform.system() == "Darwin" else ["/usr/bin/time", "-v"]
 
 
+# samply samples another process through perf_event_open, which Linux gates on
+# kernel.perf_event_paranoid; 1 or lower is needed and several distributions
+# ship 2 or higher. macOS has no such knob, so this only bites on Linux.
+PARANOID_MAX = 1
+
+
+PARANOID_PATH = "/proc/sys/kernel/perf_event_paranoid"
+
+
+def perf_event_paranoid(path=PARANOID_PATH) -> int | None:
+    """kernel.perf_event_paranoid, or None where the knob does not exist
+    (macOS) or does not read as a number."""
+    try:
+        with open(path) as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def samply_status() -> tuple[str | None, str]:
+    """(path, detail) for samply: on PATH, and permitted to sample. A samply
+    that cannot record is reported as missing rather than as working, because
+    it produces no profile and no error the caller would otherwise see."""
+    p = shutil.which("samply")
+    if not p:
+        return None, ("not installed (cargo install samply); verify-perf measures time and "
+                      "allocation without it, not sample shares")
+    lvl = perf_event_paranoid()
+    if lvl is not None and lvl > PARANOID_MAX:
+        return None, (f"{p} installed but kernel.perf_event_paranoid is {lvl}; samply needs "
+                      f"{PARANOID_MAX} or lower to sample a process. "
+                      f"sudo sysctl kernel.perf_event_paranoid={PARANOID_MAX} (persist it in "
+                      "/etc/sysctl.d/); wall clock, allocation and peak RSS are measured without it")
+    return p, p
+
+
 def tools_available() -> dict[str, str | None]:
-    import shutil
     return {"time": "/usr/bin/time" if os.path.exists("/usr/bin/time") else None,
-            "samply": shutil.which("samply")}
+            "samply": samply_status()[0]}
 
 
 def _git(repo, *a) -> str:
@@ -191,20 +227,33 @@ def measure(env, w: Workload, ref: str, *, symbol: str | None, repeats: int, out
     r = env.run(["env", *setenv, "OCAMLRUNPARAM=v=0x400", *argv], capture=True, cwd=cwd, timeout=timeout_s)
     gc = parse_gc_stats(r.stderr or "")
     samples: dict = {}
-    if symbol and tools_available()["samply"]:
-        prof = out_dir / f"{_safe(ref)}.json.gz"
-        env.run(["samply", "record", "--save-only", "--unstable-presymbolicate", "-o", str(prof), "--", *with_env, *argv],
-                capture=True, cwd=cwd, timeout=timeout_s)
-        syms = prof.with_name(prof.name.removesuffix(".gz") + ".syms.json")   # samply's sidecar name
-        if prof.exists() and syms.exists():
-            sh = sample_shares(str(prof), str(syms), symbol)
-            inclusive_pct, warnings = assess(sh)
-            samples = dict(samples_total=sh.total, samples_symbol=sh.inclusive, symbol_share_pct=inclusive_pct,
-                           samples_symbol_leaf=sh.leaf, symbol_leaf_share_pct=sh.leaf_pct,
-                           stack_completeness_pct=sh.completeness_pct, warnings=warnings, profile=str(prof))
+    if symbol:
+        found, why = samply_status()
+        if not found:
+            samples = {"warnings": (f"no sample shares for {symbol}: samply unavailable - {why}",)}
+        else:
+            prof = out_dir / f"{_safe(ref)}.json.gz"
+            r = env.run(["samply", "record", "--save-only", "--unstable-presymbolicate", "-o", str(prof),
+                         "--", *with_env, *argv], capture=True, cwd=cwd, timeout=timeout_s)
+            syms = prof.with_name(prof.name.removesuffix(".gz") + ".syms.json")   # samply's sidecar name
+            if prof.exists() and syms.exists():
+                sh = sample_shares(str(prof), str(syms), symbol)
+                inclusive_pct, warnings = assess(sh)
+                samples = dict(samples_total=sh.total, samples_symbol=sh.inclusive, symbol_share_pct=inclusive_pct,
+                               samples_symbol_leaf=sh.leaf, symbol_leaf_share_pct=sh.leaf_pct,
+                               stack_completeness_pct=sh.completeness_pct, warnings=warnings, profile=str(prof))
+            else:
+                samples = {"warnings": (f"no sample shares for {symbol}: {_samply_failed(r)}",)}
     return PerfRun(ref=ref, sha=_git(env.repo, "rev-parse", "HEAD"), build_s=built.elapsed_s,
                    wall_s=tuple(walls), max_rss_bytes=rss_max, gc=gc, exit_codes=tuple(codes),
                    **{"samples_total": None, "samples_symbol": None, "symbol_share_pct": None, "profile": None, **samples})
+
+
+def _samply_failed(r) -> str:
+    """Why a samply run left no profile behind. Its own last line of output is
+    the most specific thing available; exit code when it said nothing."""
+    lines = ((r.stderr or "") + (r.stdout or "")).strip().splitlines()
+    return f"samply recorded no profile ({lines[-1].strip() if lines else f'exit {r.returncode}'})"
 
 
 def _safe(s: str) -> str:

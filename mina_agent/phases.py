@@ -8,7 +8,8 @@
     max_turns: 40
     max_budget_usd: 5
     args: target
-    needs: gh                # executables that must be on PATH
+    needs: gh                # capabilities the phase cannot start without
+    optional: samply         # capabilities it runs without, degraded, after asking
     mode: interactive        # run in the TUI by default (headless is the default)
     env: SOME_TOKEN          # variables that must be set, in the shell or harness/.envrc
     ---
@@ -58,6 +59,7 @@ def load(path) -> Phase:
         session=meta.get("session"),
         env=_csv(meta.get("env", "")),
         needs=_csv(meta.get("needs", "")),
+        optional=_csv(meta.get("optional", "")),
         mode=_mode(meta.get("mode", "headless"), path),
     )
 

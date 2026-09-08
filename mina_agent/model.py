@@ -88,7 +88,8 @@ class Phase:
     max_budget_usd: float = 5.0
     session: str | None = None       # "profile": run inside a profiling session on args["focus"]
     env: tuple[str, ...] = ()        # environment variables the phase needs (from the shell or harness/.envrc)
-    needs: tuple[str, ...] = ()      # executables that must be on PATH
+    needs: tuple[str, ...] = ()      # capabilities the phase cannot start without (see capabilities.py)
+    optional: tuple[str, ...] = ()   # capabilities it degrades without: confirmed before the run, declared in the prompt
     mode: str = "headless"           # "headless" (SDK, no prompts, run log) or "interactive" (the TUI with this prompt and walls)
 
     @property

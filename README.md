@@ -47,8 +47,10 @@ machine already is (`gh auth login`); where that is not possible, put
 `GH_TOKEN` in `harness/.envrc` (gitignored, see `.envrc.example`) and every
 session sources it. A phase declares tools it needs with `needs:` and
 variables with `env:` in its front matter and refuses to start without
-them. Commits made in any harness session are the user's own: no
-Co-Authored-By or Generated-with lines.
+them; `optional:` names one it can run without but would measure less with,
+and asks first rather than letting the gap reach the report as a result.
+Commits made in any harness session are the user's own: no Co-Authored-By
+or Generated-with lines.
 
 Reporting a harness bug: in any interactive session, say what went wrong
 and the harness-bug-report skill drafts an issue for o1-labs/mina-agent,

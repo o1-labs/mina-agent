@@ -62,3 +62,77 @@ def test_interactive_argv_carries_phase_walls():
     assert argv[argv.index("--permission-mode") + 1] == p.permission_mode
     i = argv.index("--allowedTools")
     assert "Bash(gh *)" in argv[i:] and "--disallowedTools" in argv
+
+
+# ---- optional capabilities: the degraded preflight ------------------------
+
+OPTIONAL = "---\nname: opt\nargs: pr\nneeds: gh\noptional: samply\n---\nMeasure {{pr}}.\n"
+
+
+@pytest.fixture
+def opt_phase(tmp_path, monkeypatch):
+    _phases_dir(tmp_path, monkeypatch, opt=OPTIONAL)
+    return phases.load(tmp_path / "opt.md")
+
+
+def test_optional_is_parsed_and_needs_still_hard(opt_phase):
+    assert opt_phase.optional == ("samply",) and opt_phase.needs == ("gh",)
+
+
+def _degraded(monkeypatch, missing=("samply",)):
+    from mina_agent import capabilities as C
+    monkeypatch.setattr(C, "unmet",
+                        lambda names, path=None: [(n, "unusable here") for n in names if n in missing])
+
+
+def test_unattended_refuses_rather_than_measuring_less(opt_phase, monkeypatch, capsys):
+    """No one to ask: a degraded run must be asked for explicitly."""
+    _degraded(monkeypatch)
+    monkeypatch.setattr(run_cmd.sys.stdin, "isatty", lambda: False)
+    with pytest.raises(typer.Exit) as ex:
+        run_cmd._preflight_optional(opt_phase, {"PATH": ""}, yes=False)
+    assert ex.value.exit_code == 2
+    err = capsys.readouterr().err
+    assert "samply unavailable" in err and "--yes" in err
+
+
+def test_declining_the_prompt_stops_the_run(opt_phase, monkeypatch, capsys):
+    _degraded(monkeypatch)
+    monkeypatch.setattr(run_cmd.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(run_cmd.typer, "confirm", lambda *a, **k: False)
+    with pytest.raises(typer.Exit) as ex:
+        run_cmd._preflight_optional(opt_phase, {"PATH": ""}, yes=False)
+    assert ex.value.exit_code == 2
+    assert "nothing was run" in capsys.readouterr().err
+
+
+def test_accepting_tells_the_model_what_is_missing(opt_phase, monkeypatch):
+    """The confirmation is not enough on its own: the prompt has to say so,
+    or the model reads an absent measurement as a measurement."""
+    _degraded(monkeypatch)
+    monkeypatch.setattr(run_cmd.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(run_cmd.typer, "confirm", lambda *a, **k: True)
+    note = run_cmd._preflight_optional(opt_phase, {"PATH": ""}, yes=False)
+    assert "samply" in note and "unusable here" in note
+    assert "absent, not as zero and not as a result" in note
+    assert note.startswith("Before anything else:") and note.endswith("\n\n")
+
+
+def test_yes_skips_the_prompt_but_keeps_the_note(opt_phase, monkeypatch):
+    _degraded(monkeypatch)
+    monkeypatch.setattr(run_cmd.typer, "confirm", lambda *a, **k: pytest.fail("must not ask with --yes"))
+    assert "samply" in run_cmd._preflight_optional(opt_phase, {"PATH": ""}, yes=True)
+
+
+def test_nothing_is_said_when_everything_is_available(opt_phase, monkeypatch, capsys):
+    _degraded(monkeypatch, missing=())
+    assert run_cmd._preflight_optional(opt_phase, {"PATH": ""}, yes=False) == ""
+    assert capsys.readouterr().err == ""
+
+
+def test_the_yes_flag_exists_only_for_phases_with_optionals(tmp_path, monkeypatch):
+    _phases_dir(tmp_path, monkeypatch, opt=OPTIONAL, good=GOOD)
+    by_name = {p.name: p for p in phases.all_phases()}
+    import inspect
+    has = lambda p: "yes" in inspect.signature(run_cmd.make_command(p)).parameters
+    assert has(by_name["opt"]) and not has(by_name["good"])

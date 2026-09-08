@@ -151,9 +151,8 @@ def linters(e):
 
 def perf_tools(e):
     from .. import perf
-    t = perf.tools_available()
-    yield Check("samply", OK if t["samply"] else NOTE,
-                t["samply"] or "not installed (cargo install samply); verify-perf measures time and allocation without it, not sample shares")
+    found, detail = perf.samply_status()
+    yield Check("samply", OK if found else NOTE, detail)
 
 
 def github(e):

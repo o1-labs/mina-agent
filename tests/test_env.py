@@ -28,7 +28,8 @@ def test_require_returns_usable_env(monkeypatch):
     assert envmod.require() is e
 
 
-def test_nix_shell_is_detected_but_refused(monkeypatch, tmp_path):
+def _fake_nix_shell(monkeypatch, tmp_path):
+    """An entered nix shell: IN_NIX_SHELL set and dune resolving into the store."""
     dune = tmp_path / "nix" / "store" / "abc-dune" / "bin" / "dune"
     dune.parent.mkdir(parents=True)
     dune.write_text("")
@@ -37,9 +38,36 @@ def test_nix_shell_is_detected_but_refused(monkeypatch, tmp_path):
     monkeypatch.setattr(envmod, "_repo_root", lambda: str(tmp_path))
     monkeypatch.setattr(envmod.shutil, "which", lambda name, path=None: str(dune) if name == "dune" else None)
     monkeypatch.setattr(envmod, "_real", lambda p: "/nix/store/abc-dune/bin/dune" if p else None)
+
+
+def test_nix_shell_is_detected_and_usable(monkeypatch, tmp_path):
+    _fake_nix_shell(monkeypatch, tmp_path)
     e = envmod.detect()
-    assert e.mode is Mode.NIX and e.activated and not e.usable
-    assert any("NIX.md" in r for r in e.reasons)
-    with pytest.raises(envmod.NoToolchain, match="NIX.md"):
-        monkeypatch.setattr(envmod, "detect", lambda: e)
+    assert e.mode is Mode.NIX and e.activated and e.usable
+    assert any("IN_NIX_SHELL set" in r for r in e.reasons)
+    monkeypatch.setattr(envmod, "detect", lambda: e)
+    assert envmod.require() is e
+
+
+def test_nix_shell_activation_inherits_the_environment(monkeypatch, tmp_path):
+    """An entered shell is activated in place: activate() copies os.environ
+    rather than calling the _nix_activate stub."""
+    _fake_nix_shell(monkeypatch, tmp_path)
+    monkeypatch.setenv("MINA_AGENT_MARKER", "from-the-shell")
+    monkeypatch.setattr(envmod, "_nix_activate", lambda repo: pytest.fail("entered shells must not re-activate"))
+    e = envmod.detect()
+    assert e.activate()["MINA_AGENT_MARKER"] == "from-the-shell"
+
+
+def test_nix_mode_outside_a_shell_is_refused(monkeypatch, tmp_path):
+    """HARNESS_MODE=nix with no shell entered: entering one is a stub, so
+    there is nothing to activate and require() refuses."""
+    monkeypatch.delenv("IN_NIX_SHELL", raising=False)
+    monkeypatch.setenv("HARNESS_MODE", "nix")
+    monkeypatch.setattr(envmod, "_repo_root", lambda: str(tmp_path))
+    monkeypatch.setattr(envmod.shutil, "which", lambda name, path=None: None)
+    e = envmod.detect()
+    assert e.mode is Mode.NIX and not e.activated and not e.usable
+    monkeypatch.setattr(envmod, "detect", lambda: e)
+    with pytest.raises(envmod.NoToolchain, match="not a nix shell"):
         envmod.require()

@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .. import agent, paths
-from ..model import Status
+from ..model import Mode, Status
 from .lint import colored
 
 OK, NOTE, FAIL = Status.OK, Status.NOTE, Status.FAIL
@@ -66,7 +66,13 @@ def lsp(e):
 
 
 def opam_export(e):
+    """Whether the project switch is a superset of opam.export. Opam-only:
+    a nix shell has no switch to compare, and the flake builds its own
+    package set from opam.export, so there is nothing here to drift."""
     if not e.usable:
+        return
+    if e.mode is Mode.NIX:
+        yield Check("opam.export", NOTE, "no project switch in nix mode; the flake builds its deps from opam.export")
         return
     r = _run([os.path.join(e.repo, "_opam", "bin", "check_opam_switch"), "opam.export"], cwd=e.repo)
     out = r.stdout + r.stderr

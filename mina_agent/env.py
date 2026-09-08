@@ -24,8 +24,9 @@ Design notes:
     full environment dict; children inherit it. If the current process is
     already inside an activated shell, activate() is a no-op copy.
   * Nothing here mutates the switch, the store, or the filesystem.
-  * Nix is a reserved mode. Detection of an *already entered* nix shell is
-    two lines; entering one is a stub (see _nix_activate).
+  * Both modes run. A nix shell must already be entered: detecting one is two
+    lines and its environment is inherited as is; entering one from outside
+    is a stub (see _nix_activate).
 """
 import contextlib
 import dataclasses
@@ -110,9 +111,10 @@ class Env:
 
     @property
     def usable(self) -> bool:
-        """Only the opam mode runs today. A nix shell is detected and reported
-        but refused until the items in NIX.md are done."""
-        return self.mode is Mode.OPAM
+        """Whether dune can actually be reached. Both toolchain modes run; nix
+        counts only once the shell has been entered, since entering one from
+        outside is a stub (_nix_activate) and there is nothing to activate."""
+        return self.mode is Mode.OPAM or (self.mode is Mode.NIX and self.activated)
 
     def session_env(self) -> dict[str, str]:
         """The activated env plus what harness/.envrc exports (tokens the
@@ -292,9 +294,6 @@ def _log(msg):
 
 # -- detection ---------------------------------------------------------------
 
-NIX_UNSUPPORTED = ("nix mode is not supported yet: the harness refuses to run inside a nix shell "
-                   "until the items in harness/NIX.md are done (leave the shell and use the repo's opam switch)")
-
 
 def dotenv_path() -> str:
     from . import paths
@@ -354,15 +353,13 @@ def detect() -> Env:
             raise SystemExit(2)
         mode = Mode(override)
         reasons.append(f"HARNESS_MODE={override} override")
-        if mode is Mode.NIX:
-            reasons.append(NIX_UNSUPPORTED)
-            activated = in_nix
-        else:
-            activated = in_opam
+        activated = in_nix if mode is Mode.NIX else in_opam
+        if mode is Mode.NIX and not in_nix:
+            reasons.append("but this is not a nix shell; enter `nix develop` first "
+                           "(entering one from outside is not implemented)")
     elif in_nix:
         mode, activated = Mode.NIX, True
         reasons.append(f"IN_NIX_SHELL set and dune is {dune_real}")
-        reasons.append(NIX_UNSUPPORTED)
     elif in_opam:
         mode, activated = Mode.OPAM, True
         reasons.append(f"dune resolves to {dune_real}, under the repo-local switch")

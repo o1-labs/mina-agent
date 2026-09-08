@@ -15,6 +15,10 @@ repo's Claude settings, so plain `claude` sessions are unaffected.
     mina-agent admin setup && mina-agent admin init && mina-agent doctor
     mina-agent --help
 
+Either toolchain reaches dune: the repo's opam switch, or the flake devShell
+entered first (`nix develop .#with-lsp`, or direnv). `mina-agent status` says
+which one it found; NIX.md covers the nix side.
+
 The tool lives in uv's tool directory, not in the checkout, so it survives
 checking out branches that predate `harness/`. Reinstall after changing the
 harness source.

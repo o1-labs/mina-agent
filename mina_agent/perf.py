@@ -220,7 +220,7 @@ def measure_current(env, g, manifest_tests, workload: str, *, symbol: str | None
     dirty); `out_dir` lets several measurements share one directory."""
     if P.active(env.repo):
         raise RuntimeError("a profiling session is active (builds would be instrumented); run mina-agent profile --restore first")
-    runs = P.resolve_workload(g, manifest_tests, workload)
+    runs = P.resolve_workload(g, manifest_tests, workload, dune_version=env.dune_version)
     if len(runs) != 1:
         raise ValueError(f"{workload} resolves to {len(runs)} executables; give one (test:<dir>/<name> or exe:<path>)")
     dirty = bool(_git(env.repo, "status", "--porcelain", "--untracked-files=no"))

@@ -741,7 +741,7 @@ def profile_run(workload: str, only_test: str = "", timeout_s: int = 900) -> dic
     from . import landmarks as L, profile as P
     s = _session()
     results = []
-    for w in P.resolve_workload(GRAPH.get(), manifest_tests(), workload):
+    for w in P.resolve_workload(GRAPH.get(), manifest_tests(), workload, dune_version=ENV.dune_version):
         built = run_dune(["dune", "build", w.target], timeout_s)
         if not built.ok:
             return {"ok": False, "stage": "build", "workload": workload, "target": w.target,

@@ -226,3 +226,21 @@ def test_link_impl_refuses_second_implementation(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="does not implement"):
         P.link_impl(repo, g, "x", "inline:x")
     P.restore(repo)
+
+
+def test_inline_runner_name_follows_dune_version():
+    old = "src/lib/x/.x.inline-tests/inline_test_runner_x.exe"
+    new = "src/lib/x/.x.inline-tests/inline-test-runner.exe"
+    assert P.inline_runner("src/lib/x", "x", "3.3.1") == old
+    assert P.inline_runner("src/lib/x", "x", "3.17.2") == old
+    assert P.inline_runner("src/lib/x", "x", "3.18.0") == new
+    assert P.inline_runner("src/lib/x", "x", "3.20.2") == new
+    assert P.inline_runner("src/lib/x", "x", None) == new
+
+
+def test_resolve_inline_workload_uses_dune_version():
+    g = {"libraries": {"x": {"dir": "src/x", "deps": [], "has_inline_tests": True}}}
+    (w,) = P.resolve_workload(g, {}, "inline:x", dune_version="3.3.1")
+    assert w.target.endswith("/inline_test_runner_x.exe") and w.args == ("inline-test-runner", "x")
+    (w,) = P.resolve_workload(g, {}, "inline:x", dune_version="3.20.2")
+    assert w.target.endswith("/inline-test-runner.exe")

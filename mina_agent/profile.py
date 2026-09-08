@@ -317,7 +317,7 @@ def workload_candidates(g, focus) -> list[WorkloadCandidate]:
         if any(spec == o.spec for o in out):
             continue
         try:
-            resolve_workload(g, mt, spec)
+            resolve_workload(g, mt, spec, dune_version=tools.ENV.dune_version)
         except ValueError:
             continue
         out.append(WorkloadCandidate(spec, c["reason"], c["cost"]))
@@ -487,7 +487,27 @@ def restore(repo) -> RestoreReport:
 # workloads
 # --------------------------------------------------------------------------
 
-def resolve_workload(g, manifest_tests, spec) -> list[Workload]:
+def _dune_at_least(version: str | None, floor: tuple[int, int]) -> bool:
+    """True when `version` (dune --version output) is at least `floor`.
+    Unknown versions are taken as current."""
+    if not version:
+        return True
+    m = re.match(r"(\d+)\.(\d+)", version)
+    return bool(m) and (int(m.group(1)), int(m.group(2))) >= floor
+
+
+def inline_runner(lib_dir: str, lib: str, dune_version: str | None) -> str:
+    """The ppx_inline_test runner dune builds for a library. dune 3.18
+    shortened the artifact path (dune #11307): inline-test-runner.exe
+    replaced inline_test_runner_<lib>.exe, which dune 3.3 (branch
+    compatible) still produces."""
+    d = f"{lib_dir}/.{lib}.inline-tests"
+    if _dune_at_least(dune_version, (3, 18)):
+        return f"{d}/inline-test-runner.exe"
+    return f"{d}/inline_test_runner_{lib}.exe"
+
+
+def resolve_workload(g, manifest_tests, spec, *, dune_version: str | None = None) -> list[Workload]:
     """A workload spec -> the executables to build and run.
 
     inline:<lib>            the library's ppx_inline_test runner
@@ -501,7 +521,7 @@ def resolve_workload(g, manifest_tests, spec) -> list[Workload]:
         if not rec or not rec["has_inline_tests"]:
             raise ValueError(f"{lib} is not a library with (inline_tests)")
         d = rec["dir"]
-        exe = f"{d}/.{lib}.inline-tests/inline_test_runner_{lib}.exe"
+        exe = inline_runner(d, lib, dune_version)
         return [Workload(exe, exe, ("inline-test-runner", lib), d)]
     if spec.startswith("test:"):
         key = spec[5:]
@@ -528,7 +548,7 @@ def resolve_workload(g, manifest_tests, spec) -> list[Workload]:
             return [Workload(f"{d}/{r['name']}.exe", f"{d}/{r['name']}.exe", (), d) for _, r in units]
         libs = [k for k, r in g["libraries"].items() if r["dir"] == d and r["has_inline_tests"]]
         if libs:
-            return resolve_workload(g, manifest_tests, f"inline:{libs[0]}")
+            return resolve_workload(g, manifest_tests, f"inline:{libs[0]}", dune_version=dune_version)
     raise ValueError(f"manifest test {spec!r} runs {' '.join(cmd)}, which has no executable the "
                      "profiler can run directly; use test:<dir>/<name> or exe:<path.exe>")
 

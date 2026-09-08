@@ -54,6 +54,16 @@ It is slow; call it once with the right workload, not repeatedly.
    because the tree is dirty or a profiling session is active, report that
    and stop.
 
+   A PR that crosses the Rust boundary (the proof-systems submodule or the
+   kimchi stubs) is measured correctly without anything special from you: a
+   nix shell pins the stubs it was evaluated with, so each side is rebuilt
+   against the ones its own commit defines, and the run says so in
+   `warnings`. Budget for it -- that is a Rust build per side unless the
+   store already has them, which is minutes, not seconds. It refuses only
+   when the right stubs cannot be worked out at all (no nix on PATH); then
+   the PR is genuinely unmeasurable here, so report that and stop rather
+   than measuring one side or passing off the OCaml-only part as the whole.
+
 3. Judge. For each claim, put the measured base, head and change beside
    the claimed before, after and change. Time claims are compared on
    median wall clock, or on sample share when a symbol was named (the share

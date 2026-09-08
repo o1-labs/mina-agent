@@ -167,6 +167,24 @@ class Env:
         self._activated_env.setdefault("NO_JS_BUILD", "1")
         return self._activated_env
 
+    @contextlib.contextmanager
+    def overridden(self, extra: dict[str, str]):
+        """Temporarily add variables to the activated environment, for a
+        caller that must build with something other than what the shell
+        exported. Applies to everything run through this Env for the
+        duration, dune included; an empty dict is a no-op."""
+        env = self.activate()
+        before = {k: env.get(k) for k in extra}
+        env.update(extra)
+        try:
+            yield
+        finally:
+            for k, v in before.items():
+                if v is None:
+                    env.pop(k, None)
+                else:
+                    env[k] = v
+
     def argv(self, cmd):
         """The argv that run() will execute. No wrapper exists any more; kept
         as a seam so callers never build argv themselves."""

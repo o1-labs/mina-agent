@@ -8,6 +8,7 @@ compare() checks the base commit out in place, builds and measures, then
 the head, and restores the original branch in a finally. It refuses on a
 dirty tree or an active profiling session (which would instrument builds).
 """
+import dataclasses
 import gzip
 import json
 import os
@@ -186,6 +187,89 @@ def tools_available() -> dict[str, str | None]:
             "samply": samply_status()[0]}
 
 
+def rust_boundary_paths() -> tuple[str, ...]:
+    """Paths whose content decides what libkimchi_stubs contains, from
+    manifest.toml [boundary].rust_paths."""
+    import tomllib
+    with open(paths.MANIFEST, "rb") as fh:
+        return tuple(tomllib.load(fh)["boundary"]["rust_paths"])
+
+
+def pinned_stubs(env) -> dict[str, str]:
+    """The prebuilt Rust artifacts this environment pins, if any.
+
+    A nix devShell exports KIMCHI_STUBS (and the static lib) as store paths
+    fixed when the shell was evaluated, and the dune rule that would build
+    the stubs from source is `(enabled_if (= %{env:KIMCHI_STUBS=n} n))` --
+    disabled exactly when they are set. So every build in the shell links
+    what the shell was built with, whatever the checkout says. An opam
+    switch sets neither and dune builds the stubs per checkout, which is
+    slower and always right."""
+    aenv = env.activate()
+    return {k: v for k in ("KIMCHI_STUBS", "KIMCHI_STUBS_STATIC_LIB") if (v := aenv.get(k))}
+
+
+def _boundary_diff(repo, a: str, b: str) -> list[str]:
+    """Rust-boundary paths that differ between two commits (a submodule whose
+    pointer moved counts, which is the common case)."""
+    out = _git(repo, "diff", "--name-only", f"{a}..{b}", "--", *rust_boundary_paths())
+    return out.split()
+
+
+# The devShell the stub paths are read back from. `default` rather than
+# `with-lsp`: its closure is a subset, and it is the one shell name every
+# commit worth measuring is likely to have.
+FLAKE_SHELL = ".?submodules=1#default"
+
+
+def stubs_for_tree(env, timeout_s: int = 3600) -> dict[str, str]:
+    """KIMCHI_STUBS and KIMCHI_STUBS_STATIC_LIB as the flake defines them for
+    the tree as it currently stands, or {} when they cannot be worked out.
+
+    Both derivations take the boundary itself as their source (nix/rust.nix:
+    sourceByRegex over kimchi_bindings/stubs and proof-systems, plus the stub
+    crate's Cargo.lock), so their store paths move when and only when the
+    boundary moves. Read through `nix print-dev-env`, which is where a
+    devShell's own values come from: kimchi_stubs_static_lib is not a flake
+    output and cannot be evaluated on its own. Cheap when the store already
+    has them, a Rust build when it does not."""
+    nix = shutil.which("nix")
+    if not nix:
+        return {}
+    try:
+        r = subprocess.run([nix, "print-dev-env", FLAKE_SHELL], cwd=env.repo,
+                           capture_output=True, text=True, timeout=timeout_s)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if r.returncode != 0:
+        return {}
+    out = {}
+    for k in ("KIMCHI_STUBS", "KIMCHI_STUBS_STATIC_LIB"):
+        if m := re.search(rf"^{k}='([^']*)'", r.stdout, re.M):
+            out[k] = m.group(1)
+    return out
+
+
+def restubs(env, timeout_s: int = 3600) -> dict[str, str]:
+    """Environment overrides so a build links the stubs *this* checkout
+    defines rather than the ones the shell was evaluated with. Empty when
+    nothing is pinned (opam builds them from source per checkout) or when the
+    pinned ones are already right."""
+    pinned = pinned_stubs(env)
+    if not pinned:
+        return {}
+    want = stubs_for_tree(env, timeout_s)
+    if not want:
+        raise RuntimeError(
+            "this environment pins prebuilt Rust stubs and the right ones for this checkout "
+            "could not be worked out (`nix print-dev-env " + FLAKE_SHELL + "` failed, or nix is "
+            "not on PATH). A build here would link "
+            + ", ".join(f"{k}={v}" for k, v in pinned.items())
+            + " whatever the commit says, because dune's rule to build the stubs from source is "
+              "disabled while KIMCHI_STUBS is set.")
+    return {k: v for k, v in want.items() if pinned.get(k) != v}
+
+
 def _git(repo, *a) -> str:
     return subprocess.run(["git", *a], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
 
@@ -274,10 +358,19 @@ def measure_current(env, g, manifest_tests, workload: str, *, symbol: str | None
         raise ValueError(f"{workload} resolves to {len(runs)} executables; give one (test:<dir>/<name> or exe:<path>)")
     dirty = bool(_git(env.repo, "status", "--porcelain", "--untracked-files=no"))
     label = label or ("worktree" if dirty else "HEAD")
+    # A shell pins the stubs it was evaluated with; this checkout may not be
+    # that one. Both sides of a comparison come through here, so re-pinning
+    # once here is what makes measuring across the Rust boundary honest.
+    over = restubs(env, timeout_s)
     out_dir = out_dir or paths.state_dir() / "perf" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     out_dir.mkdir(parents=True, exist_ok=True)
-    r = measure(env, runs[0], label, symbol=symbol, repeats=repeats, out_dir=out_dir, run_dune=run_dune,
-                timeout_s=timeout_s, extra_args=extra_args, extra_env=extra_env)
+    with env.overridden(over):
+        r = measure(env, runs[0], label, symbol=symbol, repeats=repeats, out_dir=out_dir, run_dune=run_dune,
+                    timeout_s=timeout_s, extra_args=extra_args, extra_env=extra_env)
+    if over:
+        r = dataclasses.replace(r, warnings=tuple(r.warnings) + (
+            "the environment's prebuilt stubs did not match this checkout; built and linked its "
+            "own instead: " + ", ".join(f"{k}={v}" for k, v in over.items()),))
     from .model import to_json
     rec = out_dir / f"measure-{_safe(label)}.json"
     rec.write_text(json.dumps({"workload": workload, "symbol": symbol, "dirty_tree": dirty, "extra_args": list(extra_args),

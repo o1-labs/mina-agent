@@ -2,6 +2,8 @@
 import gzip
 import json
 
+import pytest
+
 from mina_agent import perf
 
 GC = "allocated_words: 16353748\nminor_words: 16346635\npromoted_words: 120315\nmajor_words: 127428\nheap_words: 188416\ntop_heap_words: 188416\n"
@@ -84,3 +86,136 @@ def test_sample_shares_weights_cpu_and_skips_rust_threads(tmp_path):
     assert sh.leaf_pct == 75.0 and sh.completeness_pct == 100.0 and round(sh.ocaml_cpu_share_pct, 1) == 3.8
     everything = perf.sample_shares(str(p), str(s), "X__f", scope="all")
     assert everything.total == 1040 and everything.ocaml_threads == 2
+
+
+# ---- samply availability ---------------------------------------------------
+
+def test_samply_missing_is_reported_as_missing(monkeypatch):
+    """Absent, and what that costs. Not how to install it."""
+    monkeypatch.setattr(perf.shutil, "which", lambda name: None)
+    found, why = perf.samply_status()
+    assert found is None
+    assert "not installed" in why and "not sample shares" in why
+
+
+def test_samply_is_unusable_when_the_kernel_forbids_sampling(monkeypatch):
+    """Installed but gated: reported as missing, because it would otherwise
+    record nothing and the caller would read that as "no samples"."""
+    monkeypatch.setattr(perf.shutil, "which", lambda name: "/usr/bin/samply")
+    monkeypatch.setattr(perf, "perf_event_paranoid", lambda: 4)
+    found, why = perf.samply_status()
+    assert found is None
+    assert "perf_event_paranoid is 4" in why and "sysctl kernel.perf_event_paranoid=1" in why
+    assert perf.tools_available()["samply"] is None
+
+
+def test_samply_is_usable_at_or_below_the_threshold(monkeypatch):
+    monkeypatch.setattr(perf.shutil, "which", lambda name: "/usr/bin/samply")
+    for lvl in (perf.PARANOID_MAX, -1, None):     # None: macOS, no such knob
+        monkeypatch.setattr(perf, "perf_event_paranoid", lambda lvl=lvl: lvl)
+        assert perf.samply_status() == ("/usr/bin/samply", "/usr/bin/samply")
+
+
+def test_perf_event_paranoid_reads_the_knob(tmp_path):
+    knob = tmp_path / "perf_event_paranoid"
+    knob.write_text("2\n")
+    assert perf.perf_event_paranoid(str(knob)) == 2
+    assert perf.perf_event_paranoid(str(tmp_path / "absent")) is None      # macOS
+    knob.write_text("not a number\n")
+    assert perf.perf_event_paranoid(str(knob)) is None
+
+
+class _Ran:
+    def __init__(self, stderr="", stdout="", returncode=1):
+        self.stderr, self.stdout, self.returncode = stderr, stdout, returncode
+
+
+def test_a_silent_samply_failure_still_says_something():
+    assert "exit 1" in perf._samply_failed(_Ran())
+    assert "permission denied" in perf._samply_failed(_Ran(stderr="oh no\npermission denied\n"))
+
+
+# ---- prebuilt Rust stubs the environment pins -----------------------------
+
+class _Env:
+    repo = "/r"
+
+    def __init__(self, **env):
+        self._env = env
+
+    def activate(self):
+        return self._env
+
+
+def test_an_opam_style_env_pins_nothing():
+    assert perf.pinned_stubs(_Env(PATH="/usr/bin")) == {}
+
+
+def test_a_nix_shell_pins_the_stubs():
+    e = _Env(KIMCHI_STUBS="/nix/store/aaa-stubs", KIMCHI_STUBS_STATIC_LIB="/nix/store/bbb-lib")
+    assert perf.pinned_stubs(e) == {"KIMCHI_STUBS": "/nix/store/aaa-stubs",
+                                    "KIMCHI_STUBS_STATIC_LIB": "/nix/store/bbb-lib"}
+
+
+def test_the_boundary_paths_come_from_the_manifest():
+    p = perf.rust_boundary_paths()
+    assert "src/lib/crypto/proof-systems" in p
+    assert any(x.endswith("stubs/Cargo.lock") for x in p)
+
+
+def test_restubs_is_empty_when_nothing_is_pinned(monkeypatch):
+    """opam builds the stubs per checkout, so there is nothing to correct."""
+    monkeypatch.setattr(perf, "stubs_for_tree", lambda env, t=0: pytest.fail("must not shell out"))
+    assert perf.restubs(_Env(PATH="/usr/bin")) == {}
+
+
+def test_restubs_is_empty_when_the_pin_already_matches(monkeypatch):
+    monkeypatch.setattr(perf, "stubs_for_tree", lambda env, t=0: {"KIMCHI_STUBS": "/nix/store/aaa"})
+    assert perf.restubs(_Env(KIMCHI_STUBS="/nix/store/aaa")) == {}
+
+
+def test_restubs_corrects_a_pin_that_does_not_match_the_checkout(monkeypatch):
+    """The whole point: the shell was evaluated at some other commit."""
+    monkeypatch.setattr(perf, "stubs_for_tree", lambda env, t=0: {
+        "KIMCHI_STUBS": "/nix/store/new", "KIMCHI_STUBS_STATIC_LIB": "/nix/store/newlib"})
+    over = perf.restubs(_Env(KIMCHI_STUBS="/nix/store/old", KIMCHI_STUBS_STATIC_LIB="/nix/store/newlib"))
+    assert over == {"KIMCHI_STUBS": "/nix/store/new"}      # only what actually differs
+
+
+def test_restubs_refuses_rather_than_guessing(monkeypatch):
+    """Pinned, and the right value cannot be worked out: measuring anyway
+    would link whatever the shell happened to have."""
+    monkeypatch.setattr(perf, "stubs_for_tree", lambda env, t=0: {})
+    with pytest.raises(RuntimeError, match="could not be worked out"):
+        perf.restubs(_Env(KIMCHI_STUBS="/nix/store/old"))
+
+
+def test_stubs_for_tree_parses_print_dev_env(monkeypatch):
+    out = ("declare -x FOO=\"bar\"\n"
+           "KIMCHI_STUBS='/nix/store/aaa-kimchi_bindings_stubs-0.1.0'\n"
+           "KIMCHI_STUBS_STATIC_LIB='/nix/store/bbb-kimchi_stubs_static_lib-0.1.0'\n")
+    monkeypatch.setattr(perf.shutil, "which", lambda n: "/usr/bin/nix")
+    monkeypatch.setattr(perf.subprocess, "run", lambda *a, **k: _Ran(stdout=out, returncode=0))
+    assert perf.stubs_for_tree(_Env()) == {
+        "KIMCHI_STUBS": "/nix/store/aaa-kimchi_bindings_stubs-0.1.0",
+        "KIMCHI_STUBS_STATIC_LIB": "/nix/store/bbb-kimchi_stubs_static_lib-0.1.0"}
+
+
+def test_stubs_for_tree_gives_up_quietly_without_nix(monkeypatch):
+    monkeypatch.setattr(perf.shutil, "which", lambda n: None)
+    assert perf.stubs_for_tree(_Env()) == {}
+
+
+def test_overridden_restores_the_environment():
+    """The override has to be undone, or one side of a comparison leaks into
+    the next."""
+    from mina_agent.env import Env
+    from mina_agent.model import BuildProvenance, Mode
+    e = Env(mode=Mode.NIX, activated=True, reasons=[], warnings=[], repo="/r",
+            build_dir=BuildProvenance(False), env={},
+            _activated_env={"KIMCHI_STUBS": "/nix/store/old", "PATH": "/usr/bin"})
+    with e.overridden({"KIMCHI_STUBS": "/nix/store/new", "NEW_VAR": "x"}):
+        assert e.activate()["KIMCHI_STUBS"] == "/nix/store/new"
+        assert e.activate()["NEW_VAR"] == "x"
+    assert e.activate()["KIMCHI_STUBS"] == "/nix/store/old"
+    assert "NEW_VAR" not in e.activate()

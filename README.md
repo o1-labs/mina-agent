@@ -15,6 +15,10 @@ repo's Claude settings, so plain `claude` sessions are unaffected.
     mina-agent admin setup && mina-agent admin init && mina-agent doctor
     mina-agent --help
 
+Either toolchain reaches dune: the repo's opam switch, or the flake devShell
+entered first (`nix develop .#with-lsp`, or direnv). `mina-agent status` says
+which one it found; NIX.md covers the nix side.
+
 The tool lives in uv's tool directory, not in the checkout, so it survives
 checking out branches that predate `harness/`. Reinstall after changing the
 harness source.
@@ -43,8 +47,10 @@ machine already is (`gh auth login`); where that is not possible, put
 `GH_TOKEN` in `harness/.envrc` (gitignored, see `.envrc.example`) and every
 session sources it. A phase declares tools it needs with `needs:` and
 variables with `env:` in its front matter and refuses to start without
-them. Commits made in any harness session are the user's own: no
-Co-Authored-By or Generated-with lines.
+them; `optional:` names one it can run without but would measure less with,
+and asks first rather than letting the gap reach the report as a result.
+Commits made in any harness session are the user's own: no Co-Authored-By
+or Generated-with lines.
 
 Reporting a harness bug: in any interactive session, say what went wrong
 and the harness-bug-report skill drafts an issue for o1-labs/mina-agent,

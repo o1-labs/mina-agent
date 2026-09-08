@@ -152,7 +152,7 @@ def check_shellcheck(repo, tree, env, files, staged):
     if not targets:
         return Result("shellcheck", "Lint/Bash", Status.OK, "no shell scripts in scope")
     if not shutil.which("shellcheck"):
-        return Result("shellcheck", "Lint/Bash", Status.SKIP, "shellcheck not installed (brew install shellcheck); CI will run it", targets)
+        return Result("shellcheck", "Lint/Bash", Status.SKIP, "shellcheck not installed; CI will run it", targets)
     r = subprocess.run(["shellcheck", "-S", "warning", *targets], cwd=tree, capture_output=True, text=True)
     if r.returncode == 0:
         return Result("shellcheck", "Lint/Bash", Status.OK, f"{len(targets)} script(s) clean")
@@ -165,7 +165,7 @@ def check_hadolint(repo, tree, env, files, staged):
     if not targets:
         return Result("hadolint", "Lint/Docker", Status.OK, "no dockerfiles in scope")
     if not shutil.which("hadolint"):
-        return Result("hadolint", "Lint/Docker", Status.SKIP, "hadolint not installed (brew install hadolint); CI will run it", targets)
+        return Result("hadolint", "Lint/Docker", Status.SKIP, "hadolint not installed; CI will run it", targets)
     args = [a for code in HADOLINT_IGNORE for a in ("--ignore", code)]
     r = subprocess.run(["hadolint", *args, *targets], cwd=tree, capture_output=True, text=True)
     if r.returncode == 0:

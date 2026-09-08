@@ -5,7 +5,8 @@
 #   git clone <harness repo> <mina>/harness && <mina>/harness/install.sh
 #
 # Needs: uv (brew install uv / nix profile install nixpkgs#uv), and the Mina
-# toolchain reachable (the repo's opam switch; nix shells: see NIX.md).
+# toolchain reachable: the repo's opam switch, or the flake devShell already
+# entered (`nix develop .#with-lsp`; see NIX.md).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 command -v uv >/dev/null 2>&1 || { echo "install.sh: uv is required (brew install uv, or nix profile install nixpkgs#uv)" >&2; exit 1; }

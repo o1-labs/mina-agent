@@ -7,6 +7,7 @@ max_turns: 40
 max_budget_usd: 15
 args: pr
 needs: gh
+optional: samply
 mode: interactive
 ---
 Verify the performance claims of pull request `{{pr}}` by reproducing them
@@ -53,13 +54,27 @@ It is slow; call it once with the right workload, not repeatedly.
    because the tree is dirty or a profiling session is active, report that
    and stop.
 
+   A PR that crosses the Rust boundary (the proof-systems submodule or the
+   kimchi stubs) is measured correctly without anything special from you: a
+   nix shell pins the stubs it was evaluated with, so each side is rebuilt
+   against the ones its own commit defines, and the run says so in
+   `warnings`. Budget for it -- that is a Rust build per side unless the
+   store already has them, which is minutes, not seconds. It refuses only
+   when the right stubs cannot be worked out at all (no nix on PATH); then
+   the PR is genuinely unmeasurable here, so report that and stop rather
+   than measuring one side or passing off the OCaml-only part as the whole.
+
 3. Judge. For each claim, put the measured base, head and change beside
    the claimed before, after and change. Time claims are compared on
    median wall clock, or on sample share when a symbol was named (the share
-   is CPU-weighted over the OCaml threads; if `symbol_share_pct` is None the
-   stacks were incomplete: say so and use `symbol_leaf_share_pct` of the
-   functions the change touches, or report the time claim unresolvable on
-   this machine);
+   is CPU-weighted over the OCaml threads). Two different things make a
+   share None, and they are not interchangeable: if `symbol_share_pct` is
+   None but `symbol_leaf_share_pct` is a number, the stacks were incomplete
+   — say so and judge on the leaf share of the functions the change touches.
+   If both are None, samply did not run at all; `warnings` says why. Then
+   there is no sample evidence on this machine: report the time claim
+   unresolvable and say what would be needed, rather than falling back to
+   wall clock as though it answered the same question;
    allocation claims on bytes allocated (the GC's exact count, so a claimed
    "N GB saved" should match closely); memory claims on peak RSS.
    "Recovered" means the direction matches and the magnitude is within a

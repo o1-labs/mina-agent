@@ -13,8 +13,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .. import agent, paths
-from ..model import Status
+from .. import agent, capabilities, paths
+from ..model import Mode, Status
 from .lint import colored
 
 OK, NOTE, FAIL = Status.OK, Status.NOTE, Status.FAIL
@@ -38,8 +38,15 @@ def toolchain(e):
                 e.summary() + ("" if e.usable else "; " + "; ".join(e.reasons)))
     b = e.build_dir
     drift = bool(b.built_by) and b.built_by != e.mode
-    yield Check("_build provenance", FAIL if drift else OK, f"built_by={b.built_by} exists={b.exists}")
+    stale = e.build_toolchain_matches is False
+    detail = f"built_by={b.built_by} exists={b.exists}"
+    if stale:
+        detail += (f"; produced by {os.path.dirname(b.ocamlc or '')}, this shell has {e.ocaml_bin} "
+                   "(dune will rebuild)")
+    yield Check("_build provenance", FAIL if drift else NOTE if stale else OK, detail)
     for w in e.warnings:
+        if w.startswith("_build "):
+            continue        # the provenance row above already carries this one
         yield Check("warning", NOTE, w)
 
 
@@ -58,15 +65,26 @@ def lsp(e):
         return
     from .. import lsp as L
     p, source = L.resolve(e)
-    yield Check("ocamllsp", OK if p else NOTE, f"{p} ({source})" if p else source)
+    # A miss fails rather than notes: the harness will not install ocamllsp and
+    # cannot guess how you would, so the one thing it can do is be loud.
+    yield Check("ocamllsp", OK if p else FAIL, f"{p} ({source})" if p else source)
+    gen = L.plugin_dir(e.repo) if L.has_lsp(e.repo) else None
     if p:
-        gen = L.plugin_dir(e.repo) if L.has_lsp(e.repo) else None
         yield Check("lsp plugin", OK if gen else FAIL,
                     f"{gen} (passed to sessions with --plugin-dir)" if gen else "not generated; run mina-agent admin init")
+    else:
+        yield Check("lsp plugin", FAIL, "no LSP server entry; sessions run without the LSP tool"
+                    + (f" (stale entry in {gen}; rerun mina-agent admin init)" if gen else ""))
 
 
 def opam_export(e):
+    """Whether the project switch is a superset of opam.export. Opam-only:
+    a nix shell has no switch to compare, and the flake builds its own
+    package set from opam.export, so there is nothing here to drift."""
     if not e.usable:
+        return
+    if e.mode is Mode.NIX:
+        yield Check("opam.export", NOTE, "no project switch in nix mode; the flake builds its deps from opam.export")
         return
     r = _run([os.path.join(e.repo, "_opam", "bin", "check_opam_switch"), "opam.export"], cwd=e.repo)
     out = r.stdout + r.stderr
@@ -136,8 +154,9 @@ def git_hook(e):
 
 def linters(e):
     for name, job in (("shellcheck", "Lint/Bash"), ("hadolint", "Lint/Docker")):
-        found = shutil.which(name)
-        yield Check(name, OK if found else NOTE, found or f"not installed; {job} will be skipped locally and run by CI")
+        found, why = capabilities.check(name)
+        yield Check(name, OK if found else NOTE, why if found else
+                    f"not installed; {job} will be skipped locally and run by CI")
     from .. import dhall
     ok, detail = dhall.status(e.repo)
     yield Check("dhall", OK if ok else NOTE, detail)
@@ -145,9 +164,8 @@ def linters(e):
 
 def perf_tools(e):
     from .. import perf
-    t = perf.tools_available()
-    yield Check("samply", OK if t["samply"] else NOTE,
-                t["samply"] or "not installed (cargo install samply); verify-perf measures time and allocation without it, not sample shares")
+    found, detail = perf.samply_status()
+    yield Check("samply", OK if found else NOTE, detail)
 
 
 def github(e):
@@ -157,7 +175,7 @@ def github(e):
     senv = e.session_env() if e.usable else {**os.environ, **envmod.dotenv()}
     gh = shutil.which("gh", path=senv.get("PATH"))
     if not gh:
-        yield Check("gh", NOTE, "not installed (brew install gh); fix-bug needs it")
+        yield Check("gh", NOTE, "not installed; fix-bug needs it")
         return
     r = subprocess.run([gh, "auth", "status"], capture_output=True, text=True, env=senv)
     how = "GH_TOKEN from harness/.envrc" if "GH_TOKEN" in envmod.dotenv() else "gh auth login"

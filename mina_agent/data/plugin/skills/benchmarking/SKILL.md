@@ -44,6 +44,20 @@ How the share is computed, and what can go wrong with it:
   (the serializer, the hash primitive, GC entry points) rather than on a
   caller that does little work itself; a caller's leaf share is ~0 by
   nature. Complete inclusive stacks need Linux perf with DWARF unwinding.
+- A change below the OCaml/Rust seam is measured against its own stubs, not
+  the shell's. `KIMCHI_STUBS` set (every nix devShell) disables dune's rule
+  to build them from source, so the artifact would otherwise be whatever the
+  shell was evaluated with -- wrong on at least one side of a comparison.
+  Both perf tools re-derive the stubs for the checkout in front of them and
+  build against those, and say so in `warnings` when they had to. The cost
+  is a Rust build per side when the store lacks them; when you expect that,
+  say so before starting rather than looking hung.
+- On Linux samply needs `kernel.perf_event_paranoid` at 1 or lower to
+  sample a process. Where it is higher, `perf_measure`/`perf_compare` say so
+  in `warnings` and every sample field is None; wall clock, allocation and
+  peak RSS are still measured. `mina-agent doctor`'s samply row reports the
+  same thing. It is a machine setting, not something to work around: tell
+  the user the sysctl and use leaf-free instruments meanwhile.
 - Sample share compares *fractions* of the run under a symbol; if the
   workload also changed size, wall clock and shares move for other reasons.
 

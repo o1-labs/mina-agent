@@ -4,11 +4,13 @@ profile format.
 Why vendored: landmarks 1.4 is x86-only (rdtsc); 1.5 supports arm64 but its
 opam package requires dune >= 3.16 while the repo pins 3.3.1, so installing
 it would upgrade dune. Its only real 3.16 dependency is the `(lang dune 3.16)`
-line: lowered to 3.3 it builds with the pinned dune. setup fetches the
-pinned sources with `opam source` (checksum-verified by opam, nothing
-installed into the switch), patches that line, and places them under
-harness/state/landmarks. harness/state/dune marks the directory vendored, so
-no alias or default build ever touches it; dune builds it only when
+line: lowered to 3.3 it builds with the pinned dune. setup downloads the
+pinned upstream archive, verifies its sha256, patches that line, and places
+the sources under harness/state/landmarks. The download is direct rather than
+`opam source` because a nix devShell has no opam; the URL and the tarball are
+the ones opam-repository pins for both packages, so the bytes are the same
+either way. harness/state/dune marks the directory vendored, so no alias or
+default build ever touches it; dune builds it only when
 `--instrument-with landmarks` makes a library require it.
 
 A library is instrumented by an `(instrumentation (backend landmarks --auto))`
@@ -23,11 +25,14 @@ ticks, calls, allocated_bytes (inclusive), sys_time, children. The threshold
 option applies to the textual format only; JSON is complete. Ticks are
 converted to seconds by calibrating against the root's sys_time.
 """
+import hashlib
+import io
 import json
 import os
 import shutil
-import subprocess
+import tarfile
 import tempfile
+import urllib.request
 
 from . import paths
 from .model import CallerEdge, FunctionStats, Profile, to_json
@@ -35,6 +40,18 @@ from .model import CallerEdge, FunctionStats, Profile, to_json
 VERSION = "1.5"
 STATE_DUNE = "(dirs landmarks)\n(vendored_dirs landmarks)\n"
 STANZA = " (instrumentation\n  (backend landmarks --auto))"
+
+# One upstream archive carries both packages (src/ is landmarks, ppx/ is
+# landmarks-ppx); opam-repository pins this same URL for each of them.
+TARBALL = "https://github.com/lexifi/landmarks/archive/refs/tags/v{v}.tar.gz"
+# sha256 of that archive. opam-repository records md5/sha512 for the same
+# bytes: sha512=b5f24973b1aabbf91c6e4f6ce594dfded10fa134e27d2e4adcc75543296f7d5
+# 64725c6b8f345cbbf294a394828b2063aa74e6fe3c068574a7510d9ff78860a40
+SHA256 = {"1.5": "a07c895fb7b05da2498c8fdf89527e905db8f5220f34fa0798eddf3d7b1970f0"}
+
+# Copied out of the archive; everything else (tests, CI, dune-workspace) is
+# left behind.
+ITEMS = ("landmarks.opam", "landmarks-ppx.opam", "src", "ppx")
 
 
 def vendor_dir(repo):
@@ -46,28 +63,43 @@ def present(repo):
     return (d / "dune-project").exists() and (d / "src" / "dune").exists() and (d / "ppx" / "dune").exists()
 
 
+def _download(url, want):
+    """The archive's bytes, refusing anything that is not the pinned sha256."""
+    try:
+        data = urllib.request.urlopen(url, timeout=120).read()
+    except OSError as ex:
+        raise RuntimeError(f"cannot download landmarks sources from {url}: {ex}") from ex
+    got = hashlib.sha256(data).hexdigest()
+    if got != want:
+        raise RuntimeError(f"sha256 mismatch for {url}: got {got}, expected {want}")
+    return data
+
+
 def fetch(env):
     """Place patched landmarks sources under harness/state/landmarks."""
     dst = vendor_dir(env.repo)
     if present(env.repo):
         return dst, "present"
-    opam = shutil.which("opam")
-    if not opam:
-        raise RuntimeError("opam not on PATH; cannot fetch landmarks sources")
+    want = SHA256.get(VERSION)
+    if not want:
+        raise RuntimeError(f"no pinned sha256 for landmarks {VERSION}")
+    url = TARBALL.format(v=VERSION)
+    data = _download(url, want)
     with tempfile.TemporaryDirectory(prefix="harness-landmarks-") as tmp:
-        for pkg in ("landmarks", "landmarks-ppx"):
-            r = subprocess.run([opam, "source", f"{pkg}.{VERSION}", f"--dir={tmp}/{pkg}"],
-                               capture_output=True, text=True, env=env.activate())
-            if r.returncode != 0:
-                raise RuntimeError(f"opam source {pkg}.{VERSION} failed: {(r.stderr or r.stdout)[-800:]}")
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+            if hasattr(tarfile, "data_filter"):   # `filter` landed in 3.11.4
+                tf.extractall(tmp, filter="data")
+            else:
+                tf.extractall(tmp)
+        lm = os.path.join(tmp, f"landmarks-{VERSION}")
+        missing = [i for i in (*ITEMS, "dune-project") if not os.path.exists(os.path.join(lm, i))]
+        if missing:
+            raise RuntimeError(f"{url} is not the expected layout: no {', '.join(missing)} under landmarks-{VERSION}/")
         if dst.exists():
             shutil.rmtree(dst)
         dst.mkdir(parents=True)
-        lm = f"{tmp}/landmarks"
-        for item in ("landmarks.opam", "landmarks-ppx.opam", "src", "ppx"):
+        for item in ITEMS:
             src = os.path.join(lm, item)
-            if not os.path.exists(src):
-                src = os.path.join(tmp, "landmarks-ppx", item)
             (shutil.copytree if os.path.isdir(src) else shutil.copyfile)(src, dst / item)
         shutil.rmtree(dst / "src" / "threads", ignore_errors=True)   # needs threads.posix; unused here
         with open(os.path.join(lm, "dune-project")) as fh:
@@ -82,7 +114,7 @@ def fetch(env):
 def status(repo):
     if present(repo):
         return True, f"{vendor_dir(repo)} (landmarks {VERSION}, patched for dune 3.3; built only under --instrument-with)"
-    return False, "not vendored; run mina-agent admin setup (fetches with opam source, installs nothing)"
+    return False, "not vendored; run mina-agent admin setup (downloads the pinned tarball, installs nothing)"
 
 
 # --------------------------------------------------------------------------

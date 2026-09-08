@@ -24,8 +24,9 @@ Design notes:
     full environment dict; children inherit it. If the current process is
     already inside an activated shell, activate() is a no-op copy.
   * Nothing here mutates the switch, the store, or the filesystem.
-  * Nix is a reserved mode. Detection of an *already entered* nix shell is
-    two lines; entering one is a stub (see _nix_activate).
+  * Both modes run. A nix shell must already be entered: detecting one is two
+    lines and its environment is inherited as is; entering one from outside
+    is a stub (see _nix_activate).
 """
 import contextlib
 import dataclasses
@@ -110,9 +111,26 @@ class Env:
 
     @property
     def usable(self) -> bool:
-        """Only the opam mode runs today. A nix shell is detected and reported
-        but refused until the items in NIX.md are done."""
-        return self.mode is Mode.OPAM
+        """Whether dune can actually be reached. Both toolchain modes run; nix
+        counts only once the shell has been entered, since entering one from
+        outside is a stub (_nix_activate) and there is nothing to activate."""
+        return self.mode is Mode.OPAM or (self.mode is Mode.NIX and self.activated)
+
+    @property
+    def build_toolchain_matches(self) -> bool | None:
+        """Whether _build was produced by the compiler this shell has. None
+        when there is nothing to compare (no _build, or its log named no
+        compiler).
+
+        Compared by directory, for two reasons: dune's log records
+        ocamlc.opt where PATH gives ocamlc, and two nix shells (or two opam
+        switches) differ in the prefix rather than the file name. `built_by`
+        cannot see this on its own -- both sides answer "nix" while the store
+        paths differ and dune rebuilds everything keyed on the compiler."""
+        recorded, current = self.build_dir.ocamlc, self.ocaml_bin
+        if not recorded or not current:
+            return None
+        return os.path.dirname(os.path.realpath(recorded)) == os.path.realpath(current)
 
     def session_env(self) -> dict[str, str]:
         """The activated env plus what harness/.envrc exports (tokens the
@@ -148,6 +166,24 @@ class Env:
         # and type-checks OCaml, so it never needs them.
         self._activated_env.setdefault("NO_JS_BUILD", "1")
         return self._activated_env
+
+    @contextlib.contextmanager
+    def overridden(self, extra: dict[str, str]):
+        """Temporarily add variables to the activated environment, for a
+        caller that must build with something other than what the shell
+        exported. Applies to everything run through this Env for the
+        duration, dune included; an empty dict is a no-op."""
+        env = self.activate()
+        before = {k: env.get(k) for k in extra}
+        env.update(extra)
+        try:
+            yield
+        finally:
+            for k, v in before.items():
+                if v is None:
+                    env.pop(k, None)
+                else:
+                    env[k] = v
 
     def argv(self, cmd):
         """The argv that run() will execute. No wrapper exists any more; kept
@@ -292,9 +328,6 @@ def _log(msg):
 
 # -- detection ---------------------------------------------------------------
 
-NIX_UNSUPPORTED = ("nix mode is not supported yet: the harness refuses to run inside a nix shell "
-                   "until the items in harness/NIX.md are done (leave the shell and use the repo's opam switch)")
-
 
 def dotenv_path() -> str:
     from . import paths
@@ -354,15 +387,13 @@ def detect() -> Env:
             raise SystemExit(2)
         mode = Mode(override)
         reasons.append(f"HARNESS_MODE={override} override")
-        if mode is Mode.NIX:
-            reasons.append(NIX_UNSUPPORTED)
-            activated = in_nix
-        else:
-            activated = in_opam
+        activated = in_nix if mode is Mode.NIX else in_opam
+        if mode is Mode.NIX and not in_nix:
+            reasons.append("but this is not a nix shell; enter `nix develop` first "
+                           "(entering one from outside is not implemented)")
     elif in_nix:
         mode, activated = Mode.NIX, True
         reasons.append(f"IN_NIX_SHELL set and dune is {dune_real}")
-        reasons.append(NIX_UNSUPPORTED)
     elif in_opam:
         mode, activated = Mode.OPAM, True
         reasons.append(f"dune resolves to {dune_real}, under the repo-local switch")
@@ -396,6 +427,13 @@ def detect() -> Env:
             e.ocaml_bin = os.path.dirname(ocamlc) if ocamlc else None
             e.dune_version = _version(e.dune, "--version", env=aenv)
             e.ocaml = _version(ocamlc, "-version", env=aenv)
+            # Same mode, different toolchain: the built_by check above cannot
+            # see it, and it costs a full rebuild just like a mode change.
+            if build.built_by == mode and e.build_toolchain_matches is False:
+                e.warnings.append(
+                    f"_build was produced by a different {mode} toolchain "
+                    f"({os.path.dirname(build.ocamlc or '')}); this shell has {e.ocaml_bin}, "
+                    "so dune will rebuild")
         except Exception as ex:  # activation failed; report, don't crash
             e.warnings.append(f"activation failed: {ex}")
     return e

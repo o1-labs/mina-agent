@@ -18,7 +18,8 @@ permission_mode: default             # default | acceptEdits
 max_turns: 40                        # headless turn budget (--max-turns overrides)
 max_budget_usd: 15                   # headless dollar budget
 mode: interactive                    # interactive | headless (default headless)
-needs: gh                            # executables that must be on PATH, checked before start
+needs: gh                            # capabilities required before start; missing = refuse
+optional: samply                     # capabilities it degrades without; missing = ask first
 env: GH_TOKEN                        # variables that must be set (shell or harness/.envrc)
 session: profile                     # optional: start a profiling session around the run
 ---
@@ -60,6 +61,20 @@ for exactly this reason). `max_budget_usd` is the other cap.
 fail with a message that says what to install or export. Prefer them over a
 first step in the prompt that discovers the same thing after spending
 turns.
+
+`needs` and `optional` name *capabilities*, not executables: `capabilities.py`
+decides, so a tool that is installed and still cannot work counts as missing
+(samply is on PATH and cannot sample unless `kernel.perf_event_paranoid` is
+1 or lower). Add a capability there rather than teaching one phase to probe
+for itself.
+
+**Optional.** `optional` is for a capability the phase can run without but
+would measure less with. It is not a silent fallback: the run stops and
+prints why, asks to continue (`--yes` answers in advance, and is required
+when there is no terminal, so an unattended run never quietly measures
+less), and prepends a paragraph to the prompt naming what is missing. That
+last part is the point — a model that sees a null field where a measurement
+should be will otherwise report it as a finding about the code.
 
 **Session.** `session: profile` instruments the focus library (the phase
 must declare `args: focus`), appends the profiling `## Session` block to the
@@ -127,6 +142,7 @@ are the model: assert the wall, not the prose).
 - [ ] walls: every "do not" in the prompt is also a `disallowed_tools` entry
 - [ ] `mode` chosen; budgets cover the steps plus cleanup
 - [ ] `needs` / `env` for anything the first step would otherwise discover
+- [ ] `optional` for a tool whose absence changes what the report can claim
 - [ ] prompt: availability paragraph, stages with stop conditions, report template
 - [ ] new tools registered in `TOOLS` and denied where they do not belong
 - [ ] `--dry-run` read end to end; `show phases` lists it; tests pass

@@ -4,18 +4,50 @@ import datetime as dt
 import inspect
 import json
 import os
-import shutil
 import sys
 from typing import Optional
 
 import typer
 
-from .. import agent, paths, phases
+from .. import agent, capabilities, paths, phases
 from ..model import Phase
 
 
+DEGRADED_NOTE = """Before anything else: this machine cannot provide {names}, so part of what
+this phase would normally measure is unavailable for the whole run.
+{details}
+Treat those measurements as absent, not as zero and not as a result: say in
+your report which claims you could not measure and why, and do not quietly
+substitute a different instrument for the one that is missing.
+
+"""
+
+
+def _preflight_optional(phase, senv, *, yes: bool):
+    """Capabilities the phase degrades without. Returns the prompt addition,
+    after confirming with whoever is running it: a run that quietly measures
+    less than it was asked to is worse than one that stops."""
+    degraded = capabilities.unmet(phase.optional, senv.get("PATH"))
+    if not degraded:
+        return ""
+    names = ", ".join(n for n, _ in degraded)
+    typer.echo(f"\n{phase.command_name}: {names} unavailable on this machine", err=True)
+    for n, why in degraded:
+        typer.echo(f"  {n}: {why}", err=True)
+    if not yes:
+        if not sys.stdin.isatty():
+            typer.echo(f"\nRefusing to run degraded unattended; pass --yes to continue without "
+                       f"{names}, or fix the above first.", err=True)
+            raise typer.Exit(2)
+        if not typer.confirm(f"\nContinue without {names}?", default=False):
+            typer.echo("stopped; nothing was run", err=True)
+            raise typer.Exit(2)
+    return DEGRADED_NOTE.format(names=names,
+                                details="\n".join(f"  {n}: {why}" for n, why in degraded))
+
+
 def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model, scope="lib",
-               headless=False, interactive=False):
+               headless=False, interactive=False, yes=False):
     from .. import env as envmod, graph, profile as P
     from .profile import _report
     e = envmod.require()
@@ -24,11 +56,13 @@ def _run_phase(phase, args, *, trace, dry_run, max_turns, max_budget_usd, model,
         typer.echo(f"{phase.command_name} needs {', '.join(missing)}: export it in the shell or in "
                    f"{envmod.dotenv_path()} (see harness/.envrc.example)", err=True)
         raise typer.Exit(2)
-    if missing := [x for x in phase.needs if not shutil.which(x, path=senv.get("PATH"))]:
-        typer.echo(f"{phase.command_name} needs {', '.join(missing)} on PATH", err=True)
+    if missing := capabilities.unmet(phase.needs, senv.get("PATH")):
+        for n, why in missing:
+            typer.echo(f"{phase.command_name} needs {n}: {why}", err=True)
         raise typer.Exit(2)
+    degraded_note = _preflight_optional(phase, senv, yes=yes or dry_run)
     g = graph.load_or_derive(e)
-    prompt = phases.render(phase, args)
+    prompt = degraded_note + phases.render(phase, args)
     session = None
     if phase.session == "profile":
         # instrument the focus for the whole run; the model gets the same
@@ -152,6 +186,12 @@ def make_command(phase: Phase):
                           default=typer.Option(False, "--interactive", help="Run in the TUI with the phase's prompt and walls"
                                                + (" (this phase's default)." if phase.interactive else "."))),
     ]
+    if phase.optional:
+        params.append(
+            inspect.Parameter("yes", inspect.Parameter.KEYWORD_ONLY, annotation=bool,
+                              default=typer.Option(False, "--yes", "-y",
+                                                   help=f"Run even when {', '.join(phase.optional)} is unavailable "
+                                                        "(otherwise you are asked; required unattended).")))
     setattr(command, "__signature__", inspect.Signature(params))
     command.__annotations__ = {p.name: p.annotation for p in params}
     command.__name__ = phase.name

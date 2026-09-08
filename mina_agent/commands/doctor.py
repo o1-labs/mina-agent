@@ -13,7 +13,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .. import agent, paths
+from .. import agent, capabilities, paths
 from ..model import Mode, Status
 from .lint import colored
 
@@ -142,8 +142,9 @@ def git_hook(e):
 
 def linters(e):
     for name, job in (("shellcheck", "Lint/Bash"), ("hadolint", "Lint/Docker")):
-        found = shutil.which(name)
-        yield Check(name, OK if found else NOTE, found or f"not installed; {job} will be skipped locally and run by CI")
+        found, why = capabilities.check(name)
+        yield Check(name, OK if found else NOTE, why if found else
+                    f"not installed; {job} will be skipped locally and run by CI")
     from .. import dhall
     ok, detail = dhall.status(e.repo)
     yield Check("dhall", OK if ok else NOTE, detail)
@@ -162,7 +163,7 @@ def github(e):
     senv = e.session_env() if e.usable else {**os.environ, **envmod.dotenv()}
     gh = shutil.which("gh", path=senv.get("PATH"))
     if not gh:
-        yield Check("gh", NOTE, "not installed (brew install gh); fix-bug needs it")
+        yield Check("gh", NOTE, "not installed; fix-bug needs it")
         return
     r = subprocess.run([gh, "auth", "status"], capture_output=True, text=True, env=senv)
     how = "GH_TOKEN from harness/.envrc" if "GH_TOKEN" in envmod.dotenv() else "gh auth login"

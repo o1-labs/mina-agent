@@ -170,8 +170,8 @@ def samply_status() -> tuple[str | None, str]:
     it produces no profile and no error the caller would otherwise see."""
     p = shutil.which("samply")
     if not p:
-        return None, ("not installed (cargo install samply); verify-perf measures time and "
-                      "allocation without it, not sample shares")
+        return None, ("not installed; verify-perf measures time and allocation without it, "
+                      "not sample shares")
     lvl = perf_event_paranoid()
     if lvl is not None and lvl > PARANOID_MAX:
         return None, (f"{p} installed but kernel.perf_event_paranoid is {lvl}; samply needs "

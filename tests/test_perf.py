@@ -89,9 +89,11 @@ def test_sample_shares_weights_cpu_and_skips_rust_threads(tmp_path):
 # ---- samply availability ---------------------------------------------------
 
 def test_samply_missing_is_reported_as_missing(monkeypatch):
+    """Absent, and what that costs. Not how to install it."""
     monkeypatch.setattr(perf.shutil, "which", lambda name: None)
     found, why = perf.samply_status()
-    assert found is None and "cargo install samply" in why
+    assert found is None
+    assert "not installed" in why and "not sample shares" in why
 
 
 def test_samply_is_unusable_when_the_kernel_forbids_sampling(monkeypatch):

@@ -116,6 +116,22 @@ class Env:
         outside is a stub (_nix_activate) and there is nothing to activate."""
         return self.mode is Mode.OPAM or (self.mode is Mode.NIX and self.activated)
 
+    @property
+    def build_toolchain_matches(self) -> bool | None:
+        """Whether _build was produced by the compiler this shell has. None
+        when there is nothing to compare (no _build, or its log named no
+        compiler).
+
+        Compared by directory, for two reasons: dune's log records
+        ocamlc.opt where PATH gives ocamlc, and two nix shells (or two opam
+        switches) differ in the prefix rather than the file name. `built_by`
+        cannot see this on its own -- both sides answer "nix" while the store
+        paths differ and dune rebuilds everything keyed on the compiler."""
+        recorded, current = self.build_dir.ocamlc, self.ocaml_bin
+        if not recorded or not current:
+            return None
+        return os.path.dirname(os.path.realpath(recorded)) == os.path.realpath(current)
+
     def session_env(self) -> dict[str, str]:
         """The activated env plus what harness/.envrc exports (tokens the
         sessions need, never committed): what every Claude session runs with."""
@@ -393,6 +409,13 @@ def detect() -> Env:
             e.ocaml_bin = os.path.dirname(ocamlc) if ocamlc else None
             e.dune_version = _version(e.dune, "--version", env=aenv)
             e.ocaml = _version(ocamlc, "-version", env=aenv)
+            # Same mode, different toolchain: the built_by check above cannot
+            # see it, and it costs a full rebuild just like a mode change.
+            if build.built_by == mode and e.build_toolchain_matches is False:
+                e.warnings.append(
+                    f"_build was produced by a different {mode} toolchain "
+                    f"({os.path.dirname(build.ocamlc or '')}); this shell has {e.ocaml_bin}, "
+                    "so dune will rebuild")
         except Exception as ex:  # activation failed; report, don't crash
             e.warnings.append(f"activation failed: {ex}")
     return e

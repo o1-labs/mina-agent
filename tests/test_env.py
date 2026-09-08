@@ -71,3 +71,60 @@ def test_nix_mode_outside_a_shell_is_refused(monkeypatch, tmp_path):
     monkeypatch.setattr(envmod, "detect", lambda: e)
     with pytest.raises(envmod.NoToolchain, match="not a nix shell"):
         envmod.require()
+
+
+# ---- _build provenance: which toolchain, not just which mode --------------
+
+def _with_build(tmp_path, recorded, current):
+    """An Env whose _build log named `recorded` and whose shell has `current`."""
+    return envmod.Env(mode=Mode.NIX, activated=True, reasons=[], warnings=[], repo=str(tmp_path),
+                      build_dir=BuildProvenance(True, "nix", recorded), env={}, ocaml_bin=current)
+
+
+def test_toolchain_match_ignores_the_compiler_filename(tmp_path):
+    """dune's log records ocamlc.opt; PATH gives ocamlc. Same install."""
+    d = tmp_path / "store" / "abc" / "bin"
+    d.mkdir(parents=True)
+    assert _with_build(tmp_path, str(d / "ocamlc.opt"), str(d)).build_toolchain_matches is True
+
+
+def test_two_nix_shells_are_not_the_same_toolchain(tmp_path):
+    """The gap this closes: both are "nix", so built_by alone says nothing."""
+    old = tmp_path / "store" / "aaa-ocaml" / "bin"
+    new = tmp_path / "store" / "bbb-ocaml" / "bin"
+    old.mkdir(parents=True); new.mkdir(parents=True)
+    e = _with_build(tmp_path, str(old / "ocamlc.opt"), str(new))
+    assert e.build_dir.built_by == str(e.mode)      # indistinguishable by mode
+    assert e.build_toolchain_matches is False
+
+
+def test_nothing_to_compare_is_not_a_complaint(tmp_path):
+    assert _with_build(tmp_path, None, "/anywhere").build_toolchain_matches is None
+    assert _with_build(tmp_path, "/x/bin/ocamlc", None).build_toolchain_matches is None
+
+
+def test_detect_warns_when_the_toolchain_moved_under_build(monkeypatch, tmp_path):
+    old = tmp_path / "store" / "aaa-ocaml" / "bin"
+    new = tmp_path / "store" / "bbb-ocaml" / "bin"
+    old.mkdir(parents=True); new.mkdir(parents=True)
+    (new / "ocamlc").write_text("")
+    (new / "dune").write_text("")
+    _fake_nix_shell(monkeypatch, tmp_path)
+    monkeypatch.setattr(envmod, "_build_provenance",
+                        lambda repo: BuildProvenance(True, "nix", str(old / "ocamlc.opt")))
+    monkeypatch.setattr(envmod.shutil, "which",
+                        lambda name, path=None: str(new / name) if name in ("dune", "ocamlc") else None)
+    monkeypatch.setattr(envmod, "_version", lambda exe, flag, *, env: "x")
+    e = envmod.detect()
+    assert any("different nix toolchain" in w and "dune will rebuild" in w for w in e.warnings), e.warnings
+
+
+def test_build_warning_is_not_repeated_by_doctor(monkeypatch, tmp_path):
+    """The _build provenance row states it; a second generic `warning` row
+    saying the same thing is noise."""
+    from mina_agent.commands import doctor
+    e = _with_build(tmp_path, None, None)
+    e.warnings.extend(["_build was produced by a different nix toolchain (...)", "ocamllsp not on PATH"])
+    rows = list(doctor.toolchain(e))
+    assert [c.detail for c in rows if c.name == "warning"] == ["ocamllsp not on PATH"]
+    assert any(c.name == "_build provenance" for c in rows)

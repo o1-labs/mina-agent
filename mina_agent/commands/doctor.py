@@ -38,8 +38,15 @@ def toolchain(e):
                 e.summary() + ("" if e.usable else "; " + "; ".join(e.reasons)))
     b = e.build_dir
     drift = bool(b.built_by) and b.built_by != e.mode
-    yield Check("_build provenance", FAIL if drift else OK, f"built_by={b.built_by} exists={b.exists}")
+    stale = e.build_toolchain_matches is False
+    detail = f"built_by={b.built_by} exists={b.exists}"
+    if stale:
+        detail += (f"; produced by {os.path.dirname(b.ocamlc or '')}, this shell has {e.ocaml_bin} "
+                   "(dune will rebuild)")
+    yield Check("_build provenance", FAIL if drift else NOTE if stale else OK, detail)
     for w in e.warnings:
+        if w.startswith("_build "):
+            continue        # the provenance row above already carries this one
         yield Check("warning", NOTE, w)
 
 

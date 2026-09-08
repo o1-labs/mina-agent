@@ -914,7 +914,9 @@ def facts() -> list:
     except RuntimeError as ex:
         out.append(f"library graph unavailable: {ex}")
     b = m["boundary"]
-    out.append("OCaml/Rust boundary (read-only, mutable=false): libraries "
+    mut = ("editable, mutable=true: the proof-systems submodule may be edited and cargo may run"
+           if b.get("mutable") else "read-only, mutable=false")
+    out.append(f"OCaml/Rust boundary ({mut}): libraries "
                + ", ".join(b["libraries"]) + f" in {b['stubs_dir']} wrap crates "
                + ", ".join(b["crates"]) + ". Protected paths: " + ", ".join(b["rust_paths"]) + ".")
     out.append("Core libraries: " + "; ".join(

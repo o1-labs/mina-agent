@@ -28,14 +28,18 @@
 # or the stubs' Cargo files. Permission deny rules and the PreToolUse hook
 # enforce this (Stage 5). Edits above the seam (kimchi_backend, pickles, ...)
 # are normal OCaml edits.
+#
+# mutable = true (current): the proof-systems submodule is editable and cargo
+# is an allowed Bash head, so review work on kimchi-stubs can happen in a
+# session. The generated stubs under kimchi_bindings/stubs/src, the vendors
+# tree and the Cargo/rust-toolchain files stay deny-listed.
 # ---------------------------------------------------------------------------
 [boundary]
-mutable = false
+mutable = true
 stubs_dir = "src/lib/crypto/kimchi_bindings/stubs"
 libraries = ["kimchi_types", "pasta_bindings", "kimchi_bindings", "pasta_bindings_backend_native"]
 crates = ["kimchi-stubs", "kimchi"]
 rust_paths = [
-  "src/lib/crypto/proof-systems",
   "src/lib/crypto/kimchi_bindings/stubs/src",
   "src/lib/crypto/kimchi_bindings/stubs/kimchi-stubs-vendors",
   "src/lib/crypto/kimchi_bindings/stubs/Cargo.toml",
@@ -209,16 +213,20 @@ ref = "16dc239"
 # on the harness tools.
 # ---------------------------------------------------------------------------
 [develop]
-bash_heads = ["git", "gh", "cd", "ls", "cat", "head", "tail", "wc", "diff", "find", "rg", "grep",
+bash_heads = ["git", "gh", "cargo", "cd", "ls", "cat", "head", "tail", "wc", "diff", "find", "rg", "grep",
               "sort", "uniq", "tr", "cut", "echo", "printf", "pwd", "which", "true", "false", "test", "["]
 mina_agent_subcommands = ["lint", "show", "status", "doctor"]
 # Of the allowed heads, what runs without a prompt. Everything else the hook
 # lets through still asks (git push, rebase, reset, gh pr create ...).
-auto_allow = ["Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)", "Bash(git blame*)",
+# "mcp__mina-harness" allows every tool of the harness MCP server: in auto
+# mode an unlisted MCP tool goes to the classifier, which has blocked build.
+auto_allow = ["mcp__mina-harness",
+              "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)", "Bash(git blame*)",
               "Bash(git grep*)", "Bash(git branch*)", "Bash(git add *)", "Bash(git commit *)", "Bash(git switch *)",
               "Bash(git restore *)", "Bash(git stash*)", "Bash(git fetch*)", "Bash(git rev-parse *)",
               "Bash(gh issue *)", "Bash(gh pr view*)", "Bash(gh pr diff*)", "Bash(gh pr list*)", "Bash(gh pr checks*)",
               "Bash(mina-agent lint*)", "Bash(mina-agent show *)", "Bash(mina-agent status*)", "Bash(mina-agent doctor*)",
+              "Bash(cargo build*)", "Bash(cargo test*)", "Bash(cargo fmt*)", "Bash(cargo clippy*)", "Bash(cargo check*)",
               "Bash(cd *)", "Bash(ls*)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)", "Bash(diff *)",
               "Bash(find *)", "Bash(rg *)", "Bash(grep *)", "Bash(pwd)", "Bash(which *)", "Bash(echo *)", "Bash(printf *)"]
 deny_tools = ["WebFetch", "WebSearch", "Agent", "Task", "NotebookEdit"]

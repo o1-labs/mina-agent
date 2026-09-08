@@ -8,7 +8,7 @@ from mina_agent import agent
 # Command heads the harness never runs. Each must be denied in both the
 # bare and the `head *` form, since a prefix rule does not match the bare word.
 HEADS = {
-    "dune", "opam", "nix", "nix-build", "nix-env", "nix-shell", "cargo", "rustup", "make",
+    "dune", "opam", "nix", "nix-build", "nix-env", "nix-shell", "rustup", "make",
     "ocamlfind", "ocamlopt", "ocamlc", "pip", "pip3",
     "./scripts/update-opam-switch.sh", "scripts/update-opam-switch.sh",
     "./scripts/pin-external-packages.sh",

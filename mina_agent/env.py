@@ -347,6 +347,20 @@ def dotenv() -> dict[str, str]:
     return {k: v for k, v in after.items() if os.environ.get(k) != v}
 
 
+def profile_env(name: str, cfg: dict) -> dict[str, str]:
+    """The environment that selects one of Mina's build profiles, for
+    Env.overridden(). `cfg` is manifest.toml [profiles]; an empty name
+    inherits whatever the shell exported, and a named one sets every var in
+    cfg["vars"] to it, so dune's %{profile} and the MINA_PROFILE that
+    node_config reads at runtime cannot disagree."""
+    if not name:
+        return {}
+    if name not in cfg["names"]:
+        raise ValueError(f"unknown build profile {name!r}; manifest.toml [profiles] lists "
+                         + ", ".join(cfg["names"]))
+    return {v: name for v in cfg["vars"]}
+
+
 class NoToolchain(RuntimeError):
     """Raised by require() when no usable toolchain was detected. The CLI
     maps it to exit 3; the reasons are the message."""

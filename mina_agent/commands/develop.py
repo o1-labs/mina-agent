@@ -18,11 +18,20 @@ interface change, errors for the fast inner loop, tests_for then test or
 test_one. Read code with find_module, usages, definition, type_at, deps_of,
 dependents_of, and the LSP tool. Use them instead of guessing.
 
+Work that is not on the dev profile needs profile=<name> on build, test or
+test_one ({profiles}); that is the only way to reach
+another profile from here. The expected values that change with it
+(constraint counts, verification keys) are the profile_dependent test, one
+run per profile.
+
 The shell is an allowlist enforced by a hook: git, gh, mina-agent
 {subcommands}, and read-only utilities ({heads}). Anything else is denied,
-and the raw toolchain (dune, opam, nix, cargo, make) always is. Some allowed
-commands still ask first (git push, rebase, reset, gh pr create); that is
-the user's call at the keyboard, so ask in words before you reach for them.
+including checked-in scripts under the repo and any interpreter that could
+run one, and the raw OCaml toolchain (dune, opam, nix, make) always is; when
+a script is the thing to run, it is the user's to run, or a harness tool
+already wraps it. Some allowed commands still ask first (git push, rebase,
+reset, gh pr create); that is the user's call at the keyboard, so ask in
+words before you reach for them.
 
 Commits are the user's own, under the configured git identity, with no
 Co-Authored-By or Generated-with lines. Before committing: check every
@@ -68,7 +77,8 @@ def develop(focus: Optional[str] = typer.Option(None, "--focus", "-f",
         notes.write_text(NOTES_TEMPLATE)
     cfg = agent.develop_config()
     rules = RULES.format(notes=str(notes), subcommands="/".join(cfg["mina_agent_subcommands"]),
-                         heads=", ".join(h for h in cfg["bash_heads"] if h not in ("git", "gh")))
+                         heads=", ".join(h for h in cfg["bash_heads"] if h not in ("git", "gh")),
+                         profiles="|".join(agent.profiles_config()["names"]))
     first_message = "\n".join([rules, *orientation(e, focus, notes)])
     resume = agent.resume_id("develop") if continue_ else None
     if dry_run:

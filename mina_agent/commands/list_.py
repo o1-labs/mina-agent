@@ -33,6 +33,9 @@ def tests():
     it = m["inline_tests"]
     print(f"inline tests: {it['name_prefix']}<library> for every library with (inline_tests); "
           f"command {' '.join(it['command_template'])}; cost {it['cost']}")
+    pr = T.build_profiles()
+    print(f"build profiles: {', '.join(pr['names'])} (default {pr['default']}); pass profile=<name> to "
+          f"build/test/test_one and it exports {', '.join(pr['vars'])} for that run")
 
 
 @app.command()

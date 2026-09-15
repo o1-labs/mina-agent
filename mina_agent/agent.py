@@ -132,11 +132,23 @@ def headless_settings():
     return {k: v for k, v in _template().items() if k != "hooks"}
 
 
-def develop_config():
-    """manifest.toml [develop]: the shell allowlist and what runs unprompted."""
+def manifest():
+    """manifest.toml, parsed. tools.py keeps its own copy at import; this is
+    for the callers that must not pull in the tool module."""
     import tomllib
     with open(paths.MANIFEST, "rb") as fh:
-        return tomllib.load(fh)["develop"]
+        return tomllib.load(fh)
+
+
+def develop_config():
+    """manifest.toml [develop]: the shell allowlist and what runs unprompted."""
+    return manifest()["develop"]
+
+
+def profiles_config():
+    """manifest.toml [profiles]: Mina's build profiles and the variables that
+    select one."""
+    return manifest()["profiles"]
 
 
 def session_settings(develop=False):
@@ -151,6 +163,11 @@ def session_settings(develop=False):
         cfg = develop_config()
         t["hooks"]["PreToolUse"] = [{"matcher": "Bash", "hooks": [{"type": "command", "command": "mina-agent hook bash-allowlist",
                                                                     "timeout": 10}]}, *t["hooks"]["PreToolUse"]]
+        # so the facts the hook injects describe the allowlist, not the deny
+        # rules the other sessions run under
+        for m in t["hooks"].get("SessionStart", []):
+            for h in m["hooks"]:
+                h["command"] += " --develop"
         t["permissions"]["allow"] = [*t["permissions"].get("allow", []), *cfg["auto_allow"]]
         t["permissions"]["deny"] = [*cfg["deny_tools"], *t["permissions"]["deny"]]
     binp = mina_agent_bin()
@@ -188,9 +205,9 @@ def sdk_hooks():
     return out
 
 
-def system_addition():
+def system_addition(develop=False):
     from . import tools
-    return "\n".join(tools.facts())
+    return "\n".join(tools.facts(develop=develop))
 
 
 # --------------------------------------------------------------------------
@@ -282,7 +299,7 @@ def interactive_argv(first_message, repo, develop=False, resume=None, phase: Pha
     first_message. phase: run that phase's prompt in the TUI with its
     permission mode and tool walls."""
     argv = ["claude", *(["--resume", resume] if resume else [first_message]),
-            "--append-system-prompt", system_addition(),
+            "--append-system-prompt", system_addition(develop),
             "--settings", json.dumps(session_settings(develop)),
             "--mcp-config", json.dumps(mcp_config()), "--strict-mcp-config"]
     if develop:

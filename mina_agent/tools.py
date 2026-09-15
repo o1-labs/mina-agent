@@ -132,14 +132,17 @@ def unit_of(relpath):
 # running dune
 # --------------------------------------------------------------------------
 
-def run_dune(argv, timeout_s) -> DuneRun:
-    """Run argv through the env adapter under the dune lock."""
+def run_dune(argv, timeout_s, overrides=None) -> DuneRun:
+    """Run argv through the env adapter under the dune lock. `overrides` are
+    environment variables in force for this run only (the build profile);
+    they are applied inside the lock, so two tool calls asking for different
+    profiles cannot see each other's."""
     if not ENV.usable:
         raise RuntimeError("no usable toolchain: " + "; ".join(ENV.reasons))
     from . import profile as P
     argv = P.dune_argv(ENV.repo, argv)   # --instrument-with landmarks while a profiling session is active
     t0 = time.time()
-    with DUNE_LOCK:
+    with DUNE_LOCK, ENV.overridden(overrides or {}):
         try:
             r = ENV.run(argv, capture=True, timeout=timeout_s, lock=True)
             code, out = r.returncode, (r.stdout or "") + (r.stderr or "")
@@ -206,12 +209,26 @@ def env_status() -> dict:
     return d
 
 
-def build(target: str, timeout_s: int = 600) -> dict:
+def build_profiles() -> dict:
+    """Mina's build profiles and the variables that select one, from
+    manifest.toml [profiles]."""
+    return MANIFEST_DATA["profiles"]
+
+
+def _profile_overrides(profile: str) -> dict:
+    return envmod.profile_env(profile, MANIFEST_DATA["profiles"])
+
+
+def build(target: str, timeout_s: int = 600, profile: str = "") -> dict:
     """Run `dune build <target>`. target is a repo-relative path or alias like
     src/lib/hex or @src/lib/hex/check or src/app/cli/src/mina.exe.
+    profile is a Mina build profile (dev, devnet, lightnet, mainnet); it sets
+    DUNE_PROFILE and MINA_PROFILE for this run and makes dune rebuild what the
+    profile reaches. Empty inherits the shell's, which is dev.
     Returns structured OCaml errors parsed from dune output."""
     t = target if target.startswith("@") else rel(target)
-    return _dune_result(run_dune(["dune", "build", t], timeout_s), target=t)
+    over = _profile_overrides(profile)
+    return _dune_result(run_dune(["dune", "build", t], timeout_s, over), target=t, profile=profile or None)
 
 
 def check(path: str, timeout_s: int = 600) -> dict:
@@ -227,28 +244,37 @@ def check(path: str, timeout_s: int = 600) -> dict:
                         library=u[1] if u and u[0] == "lib" else None)
 
 
-def test(name: str, timeout_s: int = 900) -> dict:
+def test(name: str, timeout_s: int = 900, profile: str = "") -> dict:
     """Run a named test from manifest.toml, or inline:<library> for a library's
-    ppx_inline_test blocks. Refuses tests whose modes exclude the current mode."""
+    ppx_inline_test blocks. Refuses tests whose modes exclude the current mode.
+    profile is a Mina build profile (dev, devnet, lightnet, mainnet), which the
+    profile_dependent test needs: it sets DUNE_PROFILE and MINA_PROFILE for this
+    run. Empty inherits the shell's, which is dev."""
     t = resolve_test(name)
     if ENV.mode not in t["modes"]:
         return {"ok": False, "name": name, "refused": True,
                 "reason": f"test {name} runs in modes {t['modes']}, current mode is {ENV.mode}",
                 "command": t["command"]}
+    over = _profile_overrides(profile)
     argv = list(t["command"])
     # dune caches passing runtest aliases; --force makes the test actually run
     # (and print its summary) even when nothing changed.
     if argv[:2] == ["dune", "build"] and "--force" not in argv:
         argv.insert(2, "--force")
-    return _test_result(run_dune(argv, timeout_s), name=name, command=argv, cost=t["cost"])
+    return _test_result(run_dune(argv, timeout_s, over), name=name, command=argv, cost=t["cost"],
+                        profile=profile or None)
 
 
-def test_one(file: str, test_name: str = "", timeout_s: int = 900) -> dict:
+def test_one(file: str, test_name: str = "", timeout_s: int = 900, profile: str = "") -> dict:
     """Run one ppx_inline_test block via scripts/testone.sh <file> [test_name].
-    test_name matches the string after `let%test "..."`; empty runs all blocks in the file."""
+    test_name matches the string after `let%test "..."`; empty runs all blocks in the file.
+    profile is a Mina build profile (dev, devnet, lightnet, mainnet); the script
+    reads DUNE_PROFILE and passes it to dune. Empty inherits the shell's."""
     f = rel(file)
+    over = _profile_overrides(profile)
     argv = ["bash", "scripts/testone.sh", f] + ([test_name] if test_name else [])
-    return _test_result(run_dune(argv, timeout_s), file=f, test_name=test_name or None, command=argv)
+    return _test_result(run_dune(argv, timeout_s, over), file=f, test_name=test_name or None,
+                        command=argv, profile=profile or None)
 
 
 def _test_result(r: DuneRun, **fields) -> dict:
@@ -900,10 +926,12 @@ TOOLS = ["env_status", "build", "check", "check_dependents", "test", "test_one",
 
 
 
-def facts() -> list:
+def facts(develop: bool = False) -> list:
     """Plain factual statements about the environment and manifest, for the
     SessionStart hook and run.py's --append-system-prompt. Statements, never
-    instructions (hooks docs: prompt-injection note)."""
+    instructions (hooks docs: prompt-injection note). develop=True describes
+    the development session's shell, which is an allowlist rather than the
+    deny rules the other sessions run under."""
     env, m = ENV, MANIFEST_DATA
     out = [f"mina-harness environment: {env.summary()}."]
     out += [f"warning: {w}" for w in env.warnings]
@@ -945,10 +973,26 @@ def facts() -> list:
                "code as last compiled; after every Edit of "
                "a .ml/.mli file a hook runs check automatically and returns its diagnostics. "
                "profile_* tools work only inside a mina-agent profile session, where the "
-               "focus libraries are compiled with landmarks instrumentation. "
-               "Raw dune/opam/nix/cargo/make "
-               "commands are denied by permission rules; checked-in scripts run normally; "
-               "build-config and Rust boundary files are deny-listed for edits.")
+               "focus libraries are compiled with landmarks instrumentation.")
+    pr = m["profiles"]
+    out.append("build, test and test_one take profile=<" + "|".join(pr["names"]) + ">, which exports "
+               + " and ".join(pr["vars"]) + " for that one run, as "
+               "buildkite/scripts/profile-dependent-tests.sh does; omitted, the run inherits the "
+               f"shell's, which is {pr['default']}. Expected values that vary by profile (the constraint "
+               "counts, the *_snark_vk.json fixtures) are covered by the profile_dependent test, one "
+               "run per profile. Switching profiles makes dune rebuild what the profile reaches.")
+    if develop:
+        out.append("This development session's shell is an allowlist (manifest.toml [develop]): only "
+                   + ", ".join(MANIFEST_DATA["develop"]["bash_heads"])
+                   + " and mina-agent " + "/".join(MANIFEST_DATA["develop"]["mina_agent_subcommands"])
+                   + " run. Everything else is denied, including checked-in scripts under the repo and "
+                   "any interpreter that could run one; a variable assignment in front of a denied "
+                   "command does not change that. Raw dune/opam/nix/make is denied by permission rules "
+                   "as well. build-config and Rust boundary files are deny-listed for edits.")
+    else:
+        out.append("Raw dune/opam/nix/cargo/make "
+                   "commands are denied by permission rules; checked-in scripts run normally; "
+                   "build-config and Rust boundary files are deny-listed for edits.")
     return out
 
 
@@ -993,6 +1037,12 @@ def selftest():
     g = GRAPH.get()
     assert "pickles" in g["libraries"]
     assert resolve_test("inline:currency")["command"] == ["dune", "build", "@src/lib/currency/runtest"]
+    assert _profile_overrides("devnet") == {"DUNE_PROFILE": "devnet", "MINA_PROFILE": "devnet"}
+    assert _profile_overrides("") == {}
+    try:
+        _profile_overrides("nope"); assert False
+    except ValueError:
+        pass
     fm = find_module("Mina_base.Zkapp_account.Stable")
     assert fm["hits"][0]["ml"] == "src/lib/mina_base/zkapp_account.ml" and fm["remaining"] == ["Stable"], fm
     assert find_module("Staged_ledger")["hits"][0]["role"] == "library"

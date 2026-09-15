@@ -101,7 +101,9 @@ def pre_commit():
 
 
 @app.command("session-start")
-def session_start():
+def session_start(develop: bool = typer.Option(False, "--develop",
+                                               help="Describe the development session's shell allowlist "
+                                                    "instead of the deny rules.")):
     """SessionStart: hand the session its facts (tools.facts refreshes the graph cache)."""
     from .. import env as envmod, sessions, tools, banner
     payload = _payload()
@@ -109,5 +111,5 @@ def session_start():
     e = envmod.detect()
     out = {"systemMessage": banner.render(e),
            "hookSpecificOutput": {"hookEventName": "SessionStart",
-                                  "additionalContext": "\n".join(tools.facts())}}
+                                  "additionalContext": "\n".join(tools.facts(develop=develop))}}
     print(json.dumps(out))

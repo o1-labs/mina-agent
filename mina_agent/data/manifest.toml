@@ -94,6 +94,21 @@ modes = ["opam", "nix"]
 # Measured 2026-09-03 for reference: currency ran 14 tests in 3 s warm.
 
 # ---------------------------------------------------------------------------
+# profiles: Mina's build profiles (src/lib/node_config/profiled/*.ml). The
+# build, test and test_one tools take profile=<name> and export every var
+# below for that one run, the way buildkite/scripts/profile-dependent-tests.sh
+# does. Both vars matter and must agree: dune expands %{profile} inside rules
+# (the *_snark_vk.json fixtures are named after it) while node_config resolves
+# MINA_PROFILE at runtime, defaulting to `dev` when it is unset. Omitting
+# profile inherits whatever the shell exported. Switching profiles makes dune
+# rebuild what the profile reaches.
+# ---------------------------------------------------------------------------
+[profiles]
+names = ["dev", "devnet", "lightnet", "mainnet"]
+default = "dev"
+vars = ["DUNE_PROFILE", "MINA_PROFILE"]
+
+# ---------------------------------------------------------------------------
 # tests: runnable test targets.
 #   name      - key used by the `test` MCP tool and by core.*.cheap_test
 #   command   - argv, run verbatim through `harness/env.py run --`
@@ -170,6 +185,23 @@ cost = "slow"
 measured = 105
 modes = ["opam", "nix"]
 libraries = ["transaction_snark"]
+
+[[tests]]
+name = "profile_dependent"
+# What CI runs: buildkite/scripts/profile-dependent-tests.sh <profile>. Every
+# expected value under these three directories varies by profile (the
+# constraint counts, and the {dev,devnet,lightnet,mainnet}_{transaction,
+# blockchain}_snark_vk.json fixtures), so run it once per profile:
+# test("profile_dependent", profile="devnet"). -f is in the command because
+# the script passes it: the same alias is rerun under several profiles.
+command = ["dune", "runtest", "-f",
+           "src/lib/blockchain_snark/tests",
+           "src/lib/transaction_snark/test/constraint_count",
+           "src/lib/transaction_snark/test/print_transaction_snark_vk"]
+cost = "slow"
+measured = 0
+modes = ["opam", "nix"]
+libraries = ["blockchain_snark", "transaction_snark"]
 
 [[tests]]
 name = "all_unit_tests"

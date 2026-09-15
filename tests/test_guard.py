@@ -41,10 +41,25 @@ def test_reasons_name_the_cause():
     assert "mina-agent exec" in guard.decide("mina-agent exec -- dune", H, S).reason
 
 
+def test_checked_in_scripts_and_interpreters_stay_denied():
+    # the session prompt says so; issue #8 was the prompt saying the opposite
+    for cmd in ("./buildkite/scripts/profile-dependent-tests.sh devnet",
+                "buildkite/scripts/profile-dependent-tests.sh devnet",
+                "bash buildkite/scripts/profile-dependent-tests.sh devnet",
+                "MINA_PROFILE=devnet dune build --help",
+                "DUNE_PROFILE=devnet ./scripts/testone.sh a.ml"):
+        assert not ok(cmd), cmd
+
+
 def test_develop_settings_and_argv():
     s = agent.session_settings(develop=True)
     hooks = [h["command"] for m in s["hooks"]["PreToolUse"] for h in m["hooks"]]
     assert any(h.endswith("hook bash-allowlist") for h in hooks)
+    # the session-start facts must describe the allowlist, not the deny rules
+    start = [h["command"] for m in s["hooks"]["SessionStart"] for h in m["hooks"]]
+    assert all(h.endswith("hook session-start --develop") for h in start), start
+    plain = [h["command"] for m in agent.session_settings()["hooks"]["SessionStart"] for h in m["hooks"]]
+    assert all(h.endswith("hook session-start") for h in plain), plain
     assert "Bash(git commit *)" in s["permissions"]["allow"] and "WebFetch" in s["permissions"]["deny"]
     assert "mcp__mina-harness" in s["permissions"]["allow"]
     assert "Bash(dune *)" in s["permissions"]["deny"]

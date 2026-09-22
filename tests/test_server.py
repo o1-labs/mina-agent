@@ -17,6 +17,14 @@ def test_value_error_becomes_tool_error_with_message():
         anticipated(tool)("x")
 
 
+def test_import_error_becomes_tool_error_with_message():
+    def stale_import():
+        raise ImportError("cannot import name 'LinkedImpl'")
+
+    with pytest.raises(ToolError, match="cannot import name 'LinkedImpl'"):
+        anticipated(stale_import)()
+
+
 def test_signature_and_doc_survive_for_mcp_introspection():
     w = anticipated(tool)
     assert inspect.signature(w) == inspect.signature(tool)

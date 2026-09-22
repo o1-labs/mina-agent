@@ -13,14 +13,16 @@ from . import tools
 
 def anticipated(fn):
     """Tools signal anticipated failures (unknown library, no toolchain,
-    path outside any unit) with ValueError/RuntimeError. mcp forwards only
-    ToolError text to the model and replaces anything else with a generic
-    "Error executing tool"; convert so the reason reaches the model."""
+    path outside any unit) with ValueError/RuntimeError. An ImportError can
+    also be an expected stale-server failure after an editable install is
+    changed. mcp forwards only ToolError text to the model and replaces
+    anything else with a generic "Error executing tool"; convert so the
+    reason reaches the model."""
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except (ValueError, RuntimeError) as ex:
+        except (ImportError, ValueError, RuntimeError) as ex:
             raise ToolError(str(ex)) from ex
     return wrapper
 
